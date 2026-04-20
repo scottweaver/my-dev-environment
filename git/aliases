@@ -3,6 +3,7 @@
 	ci = commit
 	st = status
 	br = branch
+	po = push origin HEAD
 	recent = branch --sort=-committerdate
 	lg = log --color --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit
 	release-tag = "!f() { \
