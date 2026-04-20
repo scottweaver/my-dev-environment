@@ -1,0 +1,61 @@
+#!/bin/bash
+
+#read -p "Which direction?" key
+
+read_key() {
+  local key rest
+  IFS= read -p $'\u2191,\u2193,\u2190,\u2192?\n' -rsn1 key
+  #IFS= read -rsn1 key
+  if [[ $key == $'\e' ]]; then
+    # Read up to 5 more bytes to catch modified sequences like \e[1;5A
+    read -rsn5 -t 0.01 rest
+    key+="$rest"
+  fi
+  printf '%s' "$key"
+}
+
+dir=""
+top_level=""
+
+handle_key() {
+  local key="$1"
+  local mod=""
+
+  case "$key" in
+  $'\e[A') dir="--top" ;;
+  $'\e[B') dir="--bottom" ;;
+  $'\e[C') dir="--right" ;;
+  $'\e[D') dir="--left" ;;
+  $'\e[1;'*)
+    # Extract modifier number and direction letter
+    local suffix="${key#$'\e[1;'}" # strip "\e[1;"
+    local modnum="${suffix%?}"     # everything except last char
+    local letter="${suffix: -1}"   # last char
+
+    case "$modnum" in
+    2) top_level="--top-level" ;;
+    *) top_level="" ;;
+      #    3) mod="Alt+" ;;
+      #    4) mod="Shift+Alt+" ;;
+      #    5) mod="Ctrl+" ;;
+      #    6) mod="Shift+Ctrl+" ;;
+      #    7) mod="Alt+Ctrl+" ;;
+      #    8) mod="Shift+Alt+Ctrl+" ;;
+    esac
+
+    case "$letter" in
+    A) dir="--top" ;;
+    B) dir="--bottom" ;;
+    C) dir="--right" ;;
+    D) dir="--left" ;;
+    esac
+    ;;
+  esac
+
+  #[[ -n $dir ]] && echo "${mod}${dir}"
+}
+
+key=$(read_key)
+handle_key "$key"
+
+wezterm cli split-pane --pane-id $WEZTERM_PANE $dir $top_level >/dev/null

@@ -1,0 +1,5 @@
+#!/bin/bash
+
+wezterm cli split-pane --pane-id $WEZTERM_PANE --right --top-level >/dev/null
+bottom_id=$(wezterm cli split-pane --pane-id $WEZTERM_PANE --bottom --top-level)
+wezterm cli split-pane --pane-id $bottom_id --right >/dev/null
