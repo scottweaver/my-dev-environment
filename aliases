@@ -1,0 +1,17 @@
+	co = checkout
+	cm = commit -m
+	ci = commit
+	st = status
+	br = branch
+	recent = branch --sort=-committerdate
+	lg = log --color --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit
+	release-tag = "!f() { \
+	        git tag -a v$1 -m \"$2\"; \
+          }; f"
+	purge-tag =	"!f() { \
+   			  git tag -d $1; \
+          git push origin :refs/tags/$1; \
+        }; f"
+  add-origin =  "!f() { \
+	        git remote add origin $1; \
+          }; f"
