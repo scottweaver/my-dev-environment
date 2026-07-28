@@ -144,6 +144,9 @@ command -v fzf >/dev/null && eval "$(fzf --zsh)"
 bindkey '^[OA' fzf-history-widget
 
 
+# RustOwl (installed by envsync via the official installer)
+export PATH="$HOME/.rustowl:$PATH"
+
 export WASMTIME_HOME="$HOME/.wasmtime"
 
 export PATH="$WASMTIME_HOME/bin:$PATH"

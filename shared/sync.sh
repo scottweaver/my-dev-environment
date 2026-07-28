@@ -191,6 +191,20 @@ link_shared_bin() {
   esac
 }
 
+# RustOwl links against rustc internals, so `cargo install rustowl` (what a
+# Brewfile cargo entry would run) fails on stable toolchains. The official
+# installer ships a prebuilt binary into ~/.rustowl and auto-provisions its
+# pinned toolchain; the shared zshrc puts ~/.rustowl on PATH.
+ensure_rustowl() {
+  if have rustowl || [[ -x "$HOME/.rustowl/rustowl" ]]; then
+    log "ok     rustowl"
+    return 0
+  fi
+  info "installing rustowl (official installer)"
+  curl -fsSL https://raw.githubusercontent.com/cordx56/rustowl/refs/heads/main/scripts/installer | sh \
+    || warn "rustowl install failed (see above)"
+}
+
 shared_install() {
   ensure_secrets
   ensure_ohmyzsh
@@ -202,6 +216,7 @@ shared_install() {
   link_vscode
   apply_vscode_extensions
   apply_npm_globals
+  ensure_rustowl
   link_shared_bin
 }
 
