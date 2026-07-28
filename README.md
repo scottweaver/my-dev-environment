@@ -51,6 +51,7 @@ envsync push       # capture manifests + commit + push
 | `envsync pull` | Pull from GitHub, then re-apply (`install`). |
 | `envsync status` | Show drift: repo vs remote, package manifests vs installed, extensions, broken links. |
 | `envsync scan` | Scan the repo working tree for tokens/keys/credentials. Runs automatically before every `push` and blocks the push on findings (override: `DEV_ENV_ALLOW_SECRETS=1`). |
+| `envsync agent-sync [args]` | Run [agent-sync](shared/bin/agent-sync) in the **current project**: mirror its `.claude/rules/*.md` into `.cursor/rules/*.mdc` so Cursor loads the same rules as Claude Code. Pass-through args: `--check`, `--watch`, `--clean`, `--help`. Aliases: `agentsync`, `rules`. |
 
 ## How syncing works
 

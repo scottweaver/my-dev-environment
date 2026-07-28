@@ -227,7 +227,7 @@ case "${1:-sync}" in
     --check|check) do_check ;;
     --clean|clean) do_clean ;;
     -h|--help|help)
-        sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
+        sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
         ;;
     *)
         die "unknown command: $1 (try --help)"
