@@ -151,10 +151,6 @@ export PATH="$WASMTIME_HOME/bin:$PATH"
 export WASMER_DIR="/Users/scottweaver/.wasmer"
 [ -s "$WASMER_DIR/wasmer.sh" ] && source "$WASMER_DIR/wasmer.sh"
 
-#golem cli
-# export PATH=$PATH:~/Projects/golem-cli/bin
-# alias golem = golem-cli/bin/golem
-
 # LambdaConf 2024 Rust Workshop: DATABASE_URL moved to ~/.secrets/dev-db
 . "$HOME/.cargo/env"
 export PATH="$HOME/.local/bin:$PATH"
