@@ -1,0 +1,8 @@
+.DS_Store
+*.bak
+*.bak.*
+*.local
+secrets/
+.secrets
+.tokens
+tokens

@@ -6,7 +6,9 @@ require("codecompanion").setup({
       claude_code = function()
         return require("codecompanion.adapters").extend("claude_code", {
           env = {
-            CLAUDE_CODE_OAUTH_TOKEN = "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",
+            -- Never hardcode the token here (this file is in a public repo).
+            -- Set it in ~/.zshrc.local:  export CLAUDE_CODE_OAUTH_TOKEN=...
+            CLAUDE_CODE_OAUTH_TOKEN = os.getenv("CLAUDE_CODE_OAUTH_TOKEN") or "",
           },
         })
       end,

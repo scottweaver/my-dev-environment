@@ -13,7 +13,7 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLAUDE_SOURCE="$REPO_DIR/claude-code"
+CLAUDE_SOURCE="$REPO_DIR/shared/claude-code"
 CLAUDE_TARGET="$HOME/.claude"
 
 timestamp="$(date +%Y%m%d-%H%M%S)"

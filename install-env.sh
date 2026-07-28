@@ -2,9 +2,9 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NVIM_SOURCE="$REPO_DIR/neovim"
+NVIM_SOURCE="$REPO_DIR/shared/neovim"
 NVIM_TARGET="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
-BIN_SOURCE="$REPO_DIR/wezterm"
+BIN_SOURCE="$REPO_DIR/bazzite/bin"
 BIN_TARGET="$HOME/.local/bin"
 
 timestamp="$(date +%Y%m%d-%H%M%S)"
@@ -53,6 +53,7 @@ echo "==> neovim config -> $NVIM_TARGET"
 link_tree "$NVIM_SOURCE" "$NVIM_TARGET"
 
 echo "==> wezterm scripts -> $BIN_TARGET"
+link_tree "$REPO_DIR/shared/bin" "$BIN_TARGET" -executable
 link_tree "$BIN_SOURCE" "$BIN_TARGET" -executable
 
 case ":$PATH:" in

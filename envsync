@@ -1,0 +1,352 @@
+#!/usr/bin/env bash
+# envsync — sync this machine's dev environment with the my-dev-environment
+# GitHub repo. Single entry point; detects the OS and applies the matching
+# partitions.
+#
+# Partitions (each is a sub-project sourced from <partition>/sync.sh):
+#   shared/    config that works on BOTH macOS and Bazzite Linux
+#              (zsh, Oh My Zsh plugins, git aliases, neovim, claude-code,
+#               VS Code settings + extensions, npm globals, shared/bin)
+#   macos/     macOS-only: Homebrew + Brewfile, macos/bin
+#   bazzite/   Bazzite-only: Flatpak manifest, bazzite/bin
+#
+# On macOS the partitions are: macos, shared.
+# On Linux the partitions are: bazzite, shared.
+# (OS partition first, so package managers exist before config is linked.)
+#
+# Commands:
+#   envsync install         bootstrap/refresh this machine from the repo
+#   envsync adopt           first-time: move this machine's dotfiles INTO the repo
+#   envsync capture         refresh machine-state manifests (Brewfile, extensions, ...)
+#   envsync push [message]  scan + capture + commit + auto-merge PR (needs gh)
+#   envsync pull            pull from GitHub + re-apply (install)
+#   envsync status          show drift between machine, repo, and GitHub
+#   envsync scan            scan the repo working tree for secrets/tokens
+#   envsync help
+#
+# Config (override via environment):
+#   DEV_ENV_REPO_URL   git remote (default: https://github.com/scottweaver/my-dev-environment.git)
+#   DEV_ENV_HOME       local checkout location (default: ~/Projects/my-dev-environment)
+#
+# Idempotent; safe to re-run. Compatible with macOS's stock bash 3.2.
+
+set -euo pipefail
+
+# ---------------------------------------------------------------- config ---
+
+DEV_ENV_REPO_URL="${DEV_ENV_REPO_URL:-https://github.com/scottweaver/my-dev-environment.git}"
+DEV_ENV_HOME="${DEV_ENV_HOME:-$HOME/Projects/my-dev-environment}"
+
+# If this script lives inside a checkout of the repo, use that checkout.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -e "$SCRIPT_DIR/.git" && -f "$SCRIPT_DIR/envsync" ]]; then
+  REPO_DIR="$SCRIPT_DIR"
+else
+  REPO_DIR="$DEV_ENV_HOME"
+fi
+
+# OS detection -> which partitions apply, in order (OS-specific first so
+# package managers are bootstrapped before shared config needs them).
+case "$(uname -s)" in
+  Darwin) OS=macos;  PARTITIONS="macos shared" ;;
+  Linux)  OS=linux;  PARTITIONS="bazzite shared"
+          if [[ -r /etc/os-release ]] && ! grep -qi bazzite /etc/os-release; then
+            # Any other Linux still gets the bazzite partition; just say so.
+            printf 'note: Linux but not Bazzite — applying bazzite + shared partitions anyway\n' >&2
+          fi ;;
+  *)      OS=other;  PARTITIONS="shared" ;;
+esac
+
+timestamp="$(date +%Y%m%d-%H%M%S)"
+
+# --------------------------------------------------------------- helpers ---
+
+log()  { printf '%s\n' "$*"; }
+info() { printf '==> %s\n' "$*"; }
+warn() { printf 'warning: %s\n' "$*" >&2; }
+die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# Symlink src into place at dest.
+#   - already-correct symlink -> no-op
+#   - symlink elsewhere       -> re-link
+#   - regular file            -> timestamped backup, then link
+link_file() {
+  local src="$1" dest="$2"
+  mkdir -p "$(dirname "$dest")"
+  if [[ -L "$dest" ]]; then
+    if [[ "$(readlink "$dest")" == "$src" ]]; then
+      log "ok     $dest"
+      return
+    fi
+    log "relink $dest (was -> $(readlink "$dest"))"
+    rm "$dest"
+  elif [[ -e "$dest" ]]; then
+    local backup="${dest}.bak.${timestamp}"
+    log "backup $dest -> $backup"
+    mv "$dest" "$backup"
+  else
+    log "link   $dest"
+  fi
+  ln -s "$src" "$dest"
+}
+
+# Symlink every file under source_dir to the same relative path under target_dir.
+link_tree() {
+  local source_dir="$1" target_dir="$2" file rel
+  [[ -d "$source_dir" ]] || { warn "skip (not in repo): $source_dir"; return 0; }
+  while IFS= read -r -d '' file; do
+    rel="${file#"$source_dir"/}"
+    link_file "$file" "$target_dir/$rel"
+  done < <(find "$source_dir" -type f -print0)
+}
+
+# Move an existing machine file into the repo, then symlink it back.
+adopt_file() {
+  local machine_path="$1" repo_path="$2"
+  if [[ -L "$machine_path" && "$(readlink "$machine_path")" == "$repo_path" ]]; then
+    log "ok     $machine_path (already adopted)"
+    return
+  fi
+  if [[ -f "$repo_path" ]]; then
+    if [[ -f "$machine_path" && ! -L "$machine_path" ]] \
+       && ! cmp -s "$machine_path" "$repo_path"; then
+      warn "repo already has $(basename "$repo_path") and it differs from $machine_path"
+      warn "  merge manually, then run 'envsync install' to link it"
+    else
+      link_file "$repo_path" "$machine_path"
+    fi
+    return
+  fi
+  if [[ ! -f "$machine_path" ]]; then
+    log "skip   $machine_path (not found)"
+    return
+  fi
+  mkdir -p "$(dirname "$repo_path")"
+  log "adopt  $machine_path -> $repo_path"
+  mv "$machine_path" "$repo_path"
+  ln -s "$repo_path" "$machine_path"
+}
+
+require_repo() {
+  [[ -d "$REPO_DIR/.git" ]] || die "repo not found at $REPO_DIR — run 'envsync install' first"
+}
+
+# ------------------------------------------------------------- partitions ---
+
+# Source each active partition's sync.sh, then dispatch hooks to it.
+# A partition defines any of: <name>_install, <name>_adopt, <name>_capture,
+# <name>_status. Missing hooks are skipped.
+
+load_partitions() {
+  local part
+  for part in $PARTITIONS; do
+    if [[ -f "$REPO_DIR/$part/sync.sh" ]]; then
+      # shellcheck source=/dev/null
+      . "$REPO_DIR/$part/sync.sh"
+    else
+      warn "partition script missing: $part/sync.sh"
+    fi
+  done
+}
+
+run_partitions() {
+  local hook="$1" part fn
+  for part in $PARTITIONS; do
+    fn="${part}_${hook}"
+    if declare -F "$fn" >/dev/null 2>&1; then
+      info "[$part] $hook"
+      "$fn"
+      log ""
+    fi
+  done
+}
+
+# ---------------------------------------------------------------- pieces ---
+
+ensure_repo() {
+  if [[ -d "$REPO_DIR/.git" ]]; then
+    log "ok     repo at $REPO_DIR"
+  else
+    info "cloning $DEV_ENV_REPO_URL -> $REPO_DIR"
+    mkdir -p "$(dirname "$REPO_DIR")"
+    git clone "$DEV_ENV_REPO_URL" "$REPO_DIR"
+  fi
+}
+
+# ------------------------------------------------------------ secret scan ---
+
+# Scan the repo working tree for things that look like credentials.
+# Returns 0 if clean, 1 if anything suspicious was found.
+run_secret_scan() {
+  info "secret scan ($REPO_DIR)"
+  local hits
+  hits="$(
+    cd "$REPO_DIR" || exit 1
+    grep -rIinE \
+      -e 'BEGIN (RSA|EC|OPENSSH|DSA|PGP) PRIVATE KEY' \
+      -e 'AKIA[0-9A-Z]{16}' \
+      -e 'gh[pousr]_[A-Za-z0-9]{20,}' \
+      -e 'github_pat_[A-Za-z0-9_]{20,}' \
+      -e 'glpat-[A-Za-z0-9_-]{15,}' \
+      -e 'xox[baprs]-[A-Za-z0-9-]{10,}' \
+      -e 'sk-(ant-)?[A-Za-z0-9_-]{24,}' \
+      -e 'npm_[A-Za-z0-9]{30,}' \
+      -e 'AIza[0-9A-Za-z_-]{30,}' \
+      -e '://[^/:@[:space:]]+:[^/@[:space:]]+@' \
+      -e '(password|passwd|api[_-]?key|access[_-]?key|secret|token|credential)s?[[:space:]]*[:=][[:space:]]*["'"'"'][^"'"'"'$]{8,}["'"'"']' \
+      --exclude-dir=.git --exclude-dir=secrets --exclude=envsync -- . 2>/dev/null || true
+  )"
+  # Also flag secret-store files by NAME (e.g. a stray copy of ~/.secrets/*).
+  local stray
+  stray="$(
+    cd "$REPO_DIR" || exit 1
+    find . \( -path ./.git -o -path ./secrets \) -prune -o \
+      \( -name '.tokens' -o -name 'tokens' -o -name '.secrets' \
+         -o -name 'id_rsa*' -o -name 'id_ed25519*' -o -name '*.pem' \) \
+      -type f -print 2>/dev/null || true
+  )"
+  if [[ -n "$hits$stray" ]]; then
+    [[ -n "$hits" ]]  && printf '%s\n' "$hits" >&2
+    # shellcheck disable=SC2001  # per-line prefix; ${var//} can't anchor lines
+    [[ -n "$stray" ]] && sed 's/^/secret-store file in repo: /' <<<"$stray" >&2
+    warn "possible secrets found (above). They belong in ~/.secrets/ (never synced)."
+    return 1
+  fi
+  log "ok     no secrets detected"
+}
+
+# -------------------------------------------------------------- commands ---
+
+cmd_install() {
+  ensure_repo
+  load_partitions
+  run_partitions install
+  log "install done ($OS: $PARTITIONS)."
+  log "New machine? Run 'envsync adopt' if it has config the repo doesn't."
+}
+
+cmd_adopt() {
+  require_repo
+  load_partitions
+  run_partitions adopt
+  run_partitions capture
+  log "adopt done. Review with 'envsync status', then 'envsync push'."
+}
+
+cmd_capture() {
+  require_repo
+  load_partitions
+  run_partitions capture
+  log "capture done. Review with 'envsync status', then 'envsync push'."
+}
+
+# Push via a short-lived PR: main is protected (required secret-scan checks,
+# enforced for admins too), so nothing lands without CI passing. The PR is
+# created with auto-merge on and merges itself once the checks are green.
+cmd_push() {
+  require_repo
+  have gh || die "push needs the GitHub CLI: brew install gh && gh auth login"
+  gh auth status >/dev/null 2>&1 || die "gh is not authenticated — run 'gh auth login'"
+  cmd_capture
+  if ! run_secret_scan; then
+    if [[ "${DEV_ENV_ALLOW_SECRETS:-0}" == 1 ]]; then
+      warn "DEV_ENV_ALLOW_SECRETS=1 set — pushing anyway"
+    else
+      die "push blocked by secret scan (fix the findings, or DEV_ENV_ALLOW_SECRETS=1 envsync push to override)"
+    fi
+  fi
+
+  local base=main
+  info "sync local $base with origin"
+  git -C "$REPO_DIR" checkout -q "$base"
+  git -C "$REPO_DIR" pull --rebase --autostash origin "$base"
+
+  git -C "$REPO_DIR" add -A
+  local ahead
+  ahead="$(git -C "$REPO_DIR" rev-list --count "origin/$base..HEAD" 2>/dev/null || echo 0)"
+  if git -C "$REPO_DIR" diff --cached --quiet && [[ "$ahead" == 0 ]]; then
+    log "nothing to push — repo already matches this machine"
+    return 0
+  fi
+
+  local host; host="$(hostname -s 2>/dev/null || hostname)"
+  host="$(printf '%s' "$host" | tr -c 'A-Za-z0-9.-' '-')"
+  local msg="${1:-envsync: $host $(date '+%Y-%m-%d %H:%M')}"
+  local branch="envsync/$host-$timestamp"
+
+  info "opening PR from $branch"
+  git -C "$REPO_DIR" checkout -q -B "$branch"
+  git -C "$REPO_DIR" diff --cached --quiet || git -C "$REPO_DIR" commit -m "$msg"
+  git -C "$REPO_DIR" push -u origin "$branch"
+  gh pr create --base "$base" --head "$branch" \
+    --title "$msg" --body "Automated envsync push from $host."
+  gh pr merge --auto --squash --delete-branch "$branch"
+
+  info "waiting for required checks (Ctrl-C is safe: PR auto-merges on green)"
+  sleep 5   # give the workflow a moment to report its checks
+  if ! gh pr checks "$branch" --watch --fail-fast; then
+    git -C "$REPO_DIR" checkout -q "$base"
+    warn "checks FAILED — PR left open for fixing: gh pr view $branch --web"
+    return 1
+  fi
+
+  # Checks are green; auto-merge fires asynchronously. Wait for it, then
+  # bring local main up to date and drop the local branch.
+  local i state
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    state="$(gh pr view "$branch" --json state -q .state 2>/dev/null || echo '')"
+    [[ "$state" == MERGED ]] && break
+    sleep 3
+  done
+  git -C "$REPO_DIR" checkout -q "$base"
+  if [[ "$state" == MERGED ]]; then
+    git -C "$REPO_DIR" pull --rebase origin "$base"
+    git -C "$REPO_DIR" branch -D "$branch" >/dev/null 2>&1 || true
+    log "merged + local $base synced"
+  else
+    warn "PR not merged yet (state: ${state:-unknown}) — it will auto-merge when ready;"
+    warn "  run 'envsync pull' afterwards to sync local $base"
+  fi
+}
+
+cmd_pull() {
+  require_repo
+  info "pull from GitHub"
+  git -C "$REPO_DIR" pull --rebase --autostash
+  cmd_install
+}
+
+cmd_status() {
+  require_repo
+  info "repo: $REPO_DIR (partitions: $PARTITIONS)"
+  git -C "$REPO_DIR" fetch --quiet 2>/dev/null || warn "could not reach remote (offline?)"
+  git -C "$REPO_DIR" status -sb
+  log ""
+  load_partitions
+  run_partitions status
+}
+
+cmd_help() {
+  sed -n '2,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+}
+
+# ------------------------------------------------------------------ main ---
+
+main() {
+  local cmd="${1:-help}"
+  shift || true
+  case "$cmd" in
+    install)        cmd_install "$@" ;;
+    adopt)          cmd_adopt "$@" ;;
+    capture)        cmd_capture "$@" ;;
+    push)           cmd_push "$@" ;;
+    pull|update)    cmd_pull "$@" ;;
+    status)         cmd_status "$@" ;;
+    scan)           require_repo; run_secret_scan ;;
+    help|-h|--help) cmd_help ;;
+    *)              die "unknown command: $cmd (try 'envsync help')" ;;
+  esac
+}
+
+main "$@"
