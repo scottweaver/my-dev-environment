@@ -1,5 +1,4 @@
 tap "coursier/formulas"
-tap "homebrew/cask-fonts"
 tap "supabase/tap"
 # Ammonite is a cleanroom re-implementation of the Scala REPL
 brew "ammonite-repl"
