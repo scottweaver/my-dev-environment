@@ -1,0 +1,67 @@
+tap "coursier/formulas"
+tap "homebrew/cask-fonts"
+tap "supabase/tap"
+# Ammonite is a cleanroom re-implementation of the Scala REPL
+brew "ammonite-repl"
+# Next-generation test runner for Rust
+brew "cargo-nextest"
+# Simple, fast and user-friendly alternative to find
+brew "fd"
+# Command-line fuzzy finder written in Go
+brew "fzf"
+# GitHub command-line tool
+brew "gh"
+# Quickly rewrite git repository history
+brew "git-filter-repo"
+# Audit git repos for secrets
+brew "gitleaks"
+# Render markdown on the CLI
+brew "glow"
+# International domain name library (IDNA2008, Punycode and TR46)
+brew "libidn2"
+# GNU Transport Layer Security (TLS) Library
+brew "gnutls"
+# GNU Privacy Guard (OpenPGP)
+brew "gnupg"
+# Lightweight and flexible command-line JSON processor
+brew "jq"
+# Ambitious Vim-fork focused on extensibility and agility
+brew "neovim"
+# Open-source, cross-platform JavaScript runtime environment
+brew "node"
+# Manage multiple Node.js versions
+brew "nvm"
+# Pinentry for GPG on Mac
+brew "pinentry-mac"
+# Package compiler and linker metadata toolkit
+brew "pkgconf"
+# Fast, disk space efficient package manager
+brew "pnpm"
+# Protocol buffers (Google's data interchange format)
+brew "protobuf"
+# Search tool like grep and The Silver Searcher
+brew "ripgrep"
+# Static analysis and lint tool, for (ba)sh scripts
+brew "shellcheck"
+# Text interface for Git repositories
+brew "tig"
+# Executes a program periodically, showing output fullscreen
+brew "watch"
+# JavaScript package manager
+brew "yarn"
+# Programming language designed for robustness, optimality, and clarity
+brew "zig"
+cask "font-fira-code"
+# Free and open-source image editor
+cask "gimp"
+# Simple application that will prevent iTunes or Apple Music from launching
+cask "notunes"
+cargo "cargo-component"
+cargo "cargo-wasi"
+cargo "golem-cli"
+cargo "rustlings"
+cargo "rustowl"
+cargo "sqlx-cli"
+npm "@agentclientprotocol/claude-agent-acp"
+npm "@gsd-build/sdk"
+npm "@zed-industries/claude-code-acp"

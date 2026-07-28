@@ -1,0 +1,2 @@
+# Oh My Zsh custom plugins (name<TAB>git-url) — managed by envsync
+history-search-multi-word	https://github.com/zdharma-continuum/history-search-multi-word.git
