@@ -11,11 +11,6 @@ if [[ ! -f "$ALIASES_SRC" ]]; then
   exit 1
 fi
 
-if [[ -f "$GITCONFIG" ]]; then
-  cp -f "$GITCONFIG" "$BACKUP"
-  echo "backup $GITCONFIG -> $BACKUP"
-fi
-
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 { printf '[alias]\n'; cat "$ALIASES_SRC"; } > "$tmp"
@@ -23,8 +18,19 @@ trap 'rm -f "$tmp"' EXIT
 # Validate the source parses as a git config file.
 git config --file "$tmp" --list >/dev/null
 
+# Only touch (and back up) ~/.gitconfig if an alias is missing or different.
+changed=0
 while IFS= read -r key; do
   value="$(git config --file "$tmp" "$key")"
+  if [[ "$(git config --global --get "$key" 2>/dev/null || true)" == "$value" ]]; then
+    echo "ok     $key"
+    continue
+  fi
+  if [[ "$changed" == 0 && -f "$GITCONFIG" ]]; then
+    cp -f "$GITCONFIG" "$BACKUP"
+    echo "backup $GITCONFIG -> $BACKUP"
+  fi
+  changed=1
   git config --global "$key" "$value"
   echo "set    $key"
 done < <(git config --file "$tmp" --name-only --get-regexp '^alias\.')
