@@ -39,7 +39,8 @@ Written for an agent with zero session history.}}
 - **Refresh trigger:** any merge or milestone that changes what an
   incoming agent needs to know: workstream shifts, a branch opens or
   closes, "Next up" changes, something lands. Wired into
-  METHODOLOGIES.md's post-merge routine (step 4).
+  METHODOLOGIES.md's post-merge routine (the "refresh STATE.md"
+  step).
 - **Always update:** "Last updated"; "Branches in flight"; prepend a
   progress entry (what / why / risk voice — a judgment edit, not a
   paste of the PR description).
@@ -52,7 +53,7 @@ Written for an agent with zero session history.}}
 - **Edit policy:** STATE.md is authored on feature branches,
   propagates through merges, and is refreshed (not deleted) on new
   branches. Never edit it directly on `main`; docs-only diffs under
-  `.claude/rules/` ride the METHODOLOGIES.md step-5 carve-out.
+  `.claude/rules/` ride the METHODOLOGIES.md docs-only carve-out.
 - **Keep entries short:** each progress entry is a pointer — date,
   PR #, ticket, a sentence or two of judgment. If you're tempted to
   write more, the detail belongs in the PR, commit, or ticket.
