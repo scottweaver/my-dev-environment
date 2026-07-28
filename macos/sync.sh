@@ -36,6 +36,23 @@ apply_brewfile() {
   brew bundle --file="$brewfile" || warn "brew bundle finished with errors (see above)"
 }
 
+# Rust comes from rustup (not the Homebrew rust formula): rustup honors
+# per-project rust-toolchain.toml pinning, and having cargo on PATH before
+# `brew bundle` stops bundle's cargo entries from spawning a nested
+# `brew install --formula rust` that races the main install loop.
+ensure_rustup() {
+  if have cargo; then
+    log "ok     rust (cargo on PATH)"
+    return 0
+  fi
+  info "installing rustup (rust toolchain manager)"
+  curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
+    | sh -s -- -y --no-modify-path
+  # zshrc already sources ~/.cargo/env; do the same for this run.
+  # shellcheck source=/dev/null
+  [[ -f "$HOME/.cargo/env" ]] && . "$HOME/.cargo/env"
+}
+
 link_macos_bin() {
   local src="$MACOS_DIR/bin" dest="$HOME/.local/bin" file
   [[ -d "$src" ]] || return 0
@@ -48,6 +65,7 @@ link_macos_bin() {
 
 macos_install() {
   ensure_homebrew
+  ensure_rustup
   apply_brewfile
   link_macos_bin
 }
