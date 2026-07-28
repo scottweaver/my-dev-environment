@@ -23,6 +23,9 @@
 #   envsync pull            pull from GitHub + re-apply (install)
 #   envsync status          show drift between machine, repo, and GitHub
 #   envsync scan            scan the repo working tree for secrets/tokens
+#   envsync agent-sync [..] mirror the CURRENT project's .claude/rules into
+#                           .cursor/rules (args pass through: --check,
+#                           --watch, --clean; see 'envsync agent-sync --help')
 #   envsync help
 #
 # Config (override via environment):
@@ -379,8 +382,19 @@ cmd_status() {
   run_partitions status
 }
 
+# Dispatch into the agent-sync tool (Cursor rule mirrors). Unlike the other
+# commands this operates on the CURRENT working directory — the project
+# whose rules you want mirrored — not on the dotfiles repo.
+cmd_agent_sync() {
+  local tool="$REPO_DIR/shared/bin/agent-sync"
+  [[ -x "$tool" ]] || tool="$(command -v agent-sync 2>/dev/null || true)"
+  [[ -n "$tool" && -x "$tool" ]] \
+    || die "agent-sync not found — run 'envsync pull' (or 'envsync install') first"
+  exec "$tool" "$@"
+}
+
 cmd_help() {
-  sed -n '2,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,/^# Idempotent/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # ------------------------------------------------------------------ main ---
@@ -396,6 +410,7 @@ main() {
     pull|update)    cmd_pull "$@" ;;
     status)         cmd_status "$@" ;;
     scan)           require_repo; run_secret_scan ;;
+    agent-sync|agentsync|rules) cmd_agent_sync "$@" ;;
     help|-h|--help) cmd_help ;;
     *)              die "unknown command: $cmd (try 'envsync help')" ;;
   esac
