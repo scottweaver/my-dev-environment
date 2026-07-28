@@ -42,15 +42,23 @@ an installed file.
 
 ### 2. Detect the stack
 
-- `Cargo.toml` present → install `RUST_BEST_PRACTICES.md`.
-- `package.json` or `tsconfig.json` present → install
+Look at the repo root **and first-level workspace/package directories**
+(never inside `node_modules/`, `target/`, or vendored trees):
+
+- `Cargo.toml` → install `RUST_BEST_PRACTICES.md`.
+- `package.json` or `tsconfig.json` → install
   `TS_BEST_PRACTICES.md`.
 - Both → both. Neither → ask the user which (or neither).
 
 ### 3. Install the fixed rule files
 
-Copy verbatim from `references/` into `.claude/rules/`:
-the detected best-practices file(s) and `METHODOLOGIES.md`.
+Copy from `references/` into `.claude/rules/`: the detected
+best-practices file(s) and `METHODOLOGIES.md`.
+
+- **Dereference symlinks** (`cp -L`) — the references may be symlinks
+  into the dotfiles repo; the installed files must be real files.
+- **Merge mode:** skip any file that already exists in the target
+  (step 1's no-overwrite rule applies to this step too).
 
 ### 4. Generate STATE.md
 
@@ -58,7 +66,8 @@ Fill `STATE.template.md` from a quick repo analysis — `git log
 --oneline -15`, `git branch -a`, the README, open TODOs. Write a real
 "Active workstream" paragraph and "Next up" list, then **show the
 draft to the user and confirm** before writing. Seed the progress log
-with one entry: today's date, "Rules layer bootstrapped".
+with one entry in the template's full what/why/risk format: today's
+date, headline "Rules layer bootstrapped".
 
 ### 5. Generate ARCHITECTURE.md — bespoke, via dialog
 
@@ -81,11 +90,21 @@ boilerplate:
 Only write the file after the dialog. Keep every constraint
 falsifiable and dated.
 
+**Non-interactive runs** (subagent, CI, user unavailable): don't
+skip the file and don't silently ship guesses — write it with every
+unconfirmed constraint explicitly tagged `PROPOSED (<date>)` or
+`TBD`, note in the "Established" line that the dialog is pending,
+and surface the open questions in the run's summary. The same
+fallback applies to the step-4 STATE.md confirmation.
+
 ### 6. CLAUDE.md + AGENTS.md
 
 - No existing `CLAUDE.md`: fill `CLAUDE.template.md` (project name +
-  short description; keep only authority-table rows for files
-  actually installed — drop the `{{*_ROW}}` markers) and write it.
+  short description). Authority-table row markers: a `{{*_ROW}}`
+  prefix marks a conditional row — if that file was installed,
+  delete **just the marker text** and keep the row; if not, delete
+  the **entire line**. Unmarked rows always stay. A row must never
+  point at a file that doesn't exist.
 - Existing `CLAUDE.md`: append the "Agent memory and rules" and
   "Top-level defaults" sections (adapted to what was installed)
   instead of replacing the file; show the diff first.
@@ -103,9 +122,11 @@ for this project?"** Options: yes / no / GitHub issues instead.
 - **GitHub issues** → skip LINEAR.md; still offer the
   `bootstrap-project` step below with the GitHub tracker.
 - **Yes**:
-  1. Verify auth: `source ~/.zshrc; test -n "$LINEAR_API_KEY"`. If
-     missing, tell the user to add `export LINEAR_API_KEY=...` to a
-     file under `~/.secrets/` and stop this step. Never ask for or
+  1. Verify auth without reading any values:
+     `zsh -ic 'test -n "$LINEAR_API_KEY"' 2>/dev/null || grep -rlq
+     LINEAR_API_KEY ~/.secrets/ 2>/dev/null`. If absent, tell the
+     user to add `export LINEAR_API_KEY=...` to a file under
+     `~/.secrets/` and stop this step. Never ask for, print, or
      handle the key's value directly.
   2. Probe the workspace (teams → pick/confirm team → states,
      labels, projects; create a project in Linear only with explicit
