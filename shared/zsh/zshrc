@@ -155,7 +155,7 @@ export WASMER_DIR="/Users/scottweaver/.wasmer"
 [ -s "$WASMER_DIR/wasmer.sh" ] && source "$WASMER_DIR/wasmer.sh"
 
 # LambdaConf 2024 Rust Workshop: DATABASE_URL moved to ~/.secrets/dev-db
-. "$HOME/.cargo/env"
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 export PATH="$HOME/.local/bin:$PATH"
 
 
