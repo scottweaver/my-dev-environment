@@ -1,3 +1,2 @@
 @agentclientprotocol/claude-agent-acp
-@gsd-build/sdk
 @zed-industries/claude-code-acp
