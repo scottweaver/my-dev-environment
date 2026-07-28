@@ -64,8 +64,14 @@ configure_iterm() {
 # `brew bundle` stops bundle's cargo entries from spawning a nested
 # `brew install --formula rust` that races the main install loop.
 ensure_rustup() {
+  if [[ -x "$HOME/.cargo/bin/cargo" ]]; then
+    log "ok     rust (rustup-managed cargo)"
+    return 0
+  fi
   if have cargo; then
-    log "ok     rust (cargo on PATH)"
+    warn "cargo found outside rustup: $(command -v cargo)"
+    warn "  rust-toolchain.toml pinning won't work with it — run"
+    warn "  'brew uninstall rust', then 'envsync install' to switch to rustup"
     return 0
   fi
   info "installing rustup (rust toolchain manager)"
