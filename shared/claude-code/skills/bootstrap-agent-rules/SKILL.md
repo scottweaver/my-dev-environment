@@ -13,7 +13,8 @@ End state after a full run:
 
 ```
 CLAUDE.md                        authority map (or section appended to existing)
-AGENTS.md -> CLAUDE.md           symlink
+AGENTS.md -> CLAUDE.md           symlink (read natively by Cursor & others)
+.cursor/rules/*.mdc              generated mirrors of .claude/rules (agent-sync)
 .claude/rules/
   RUST_BEST_PRACTICES.md         if Rust detected
   TS_BEST_PRACTICES.md           if TypeScript detected
@@ -111,6 +112,19 @@ fallback applies to the step-4 STATE.md confirmation.
 - Symlink: `ln -sf CLAUDE.md AGENTS.md` (relative link, from the repo
   root). If `AGENTS.md` exists as a regular file, ask before
   replacing; offer to merge its content into CLAUDE.md first.
+
+### 6b. Cursor mirrors
+
+Cursor reads `AGENTS.md` (the symlink covers that) and
+`.cursor/rules/*.mdc` — it does NOT load `.claude/rules/`. Run
+`agent-sync` (installed on PATH by envsync; falls back to the
+project's own `scripts/agent-sync.sh` if present) from the project
+root to generate the `.cursor/rules/` mirrors. The generated files
+are marked DO-NOT-EDIT; `.claude/rules/` stays the single source of
+truth. Re-run `agent-sync` after any rules edit (or use
+`agent-sync --check` in CI). Per-file Cursor activation is controlled
+by a magic first-line comment in the source rule — see
+`agent-sync --help`.
 
 ### 7. Linear integration — optional, ALWAYS ask first
 

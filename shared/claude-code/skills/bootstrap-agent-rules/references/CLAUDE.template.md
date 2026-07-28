@@ -31,6 +31,14 @@ reading it. Stable architecture docs win over `STATE.md` on questions
 of intended shape; `STATE.md` wins on what is actually in flight
 right now.
 
+**Non-Claude agents (Cursor, etc.):** `.cursor/rules/*.mdc` are
+generated mirrors of `.claude/rules/` — edit the source, then run
+`agent-sync` to regenerate; never edit the mirrors. Reusable
+cross-project workflows ("skills") live at `~/.claude/skills/<name>/
+SKILL.md`; any agent may read one and follow it when the user asks
+for that workflow by name (e.g. wrap-up, daily-stand-up,
+bootstrap-agent-rules).
+
 ## Top-level defaults
 
 - Confirm before destructive operations (branch deletion, history
