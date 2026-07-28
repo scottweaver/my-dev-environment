@@ -90,6 +90,8 @@ macos/
   sync.sh
   Brewfile                       Homebrew formulae/casks/taps (brew bundle)
   bin/                        -> ~/.local/bin (macOS-only scripts)
+  iterm/                         iTerm2 settings (iTerm loads/saves this
+                                 folder directly via its custom-folder mode)
 bazzite/
   sync.sh
   flatpaks.txt                   Flatpak app manifest
