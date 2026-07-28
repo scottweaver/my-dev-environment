@@ -51,6 +51,8 @@ brew "yarn"
 # Programming language designed for robustness, optimality, and clarity
 brew "zig"
 cask "font-fira-code"
+cask "font-inconsolata-nerd-font"
+cask "font-meslo-for-powerlevel10k"
 # Free and open-source image editor
 cask "gimp"
 # Simple application that will prevent iTunes or Apple Music from launching
