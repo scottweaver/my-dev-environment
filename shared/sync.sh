@@ -64,32 +64,38 @@ ensure_ohmyzsh() {
     "" --unattended
 }
 
-# Manifest format: one plugin per line, "name<TAB>git-url". Lines starting
-# with # are comments. Installed into $ZSH_CUSTOM/plugins/<name>.
-apply_omz_custom() {
-  local manifest="$SHARED_DIR/zsh/omz-custom-plugins.txt"
+# Manifest format: one entry per line, "name<TAB>git-url". Lines starting
+# with # are comments. kind is "plugins" or "themes"; entries install
+# into $ZSH_CUSTOM/<kind>/<name>.
+apply_omz_kind() {
+  local kind="$1" manifest="$SHARED_DIR/zsh/omz-custom-$1.txt"
   [[ -f "$manifest" ]] || return 0
   local custom="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
-  [[ -d "$HOME/.oh-my-zsh" ]] || { warn "Oh My Zsh missing; skipping custom plugins"; return 0; }
+  [[ -d "$HOME/.oh-my-zsh" ]] || { warn "Oh My Zsh missing; skipping custom $kind"; return 0; }
   local name url
   while IFS=$'\t' read -r name url; do
     [[ -z "$name" || "$name" == \#* ]] && continue
-    [[ -n "$url" ]] || { warn "malformed plugin line: $name"; continue; }
-    # Safety: plugin name must be a plain directory name; url must not look
+    [[ -n "$url" ]] || { warn "malformed $kind line: $name"; continue; }
+    # Safety: name must be a plain directory name; url must not look
     # like a command-line option.
     case "$name" in
-      */*|.*|-*) warn "refusing suspicious plugin name: $name"; continue ;;
+      */*|.*|-*) warn "refusing suspicious $kind name: $name"; continue ;;
     esac
     case "$url" in
-      -*) warn "refusing suspicious plugin url: $url"; continue ;;
+      -*) warn "refusing suspicious $kind url: $url"; continue ;;
     esac
-    if [[ -d "$custom/plugins/$name" ]]; then
-      log "ok     omz plugin $name"
+    if [[ -d "$custom/$kind/$name" ]]; then
+      log "ok     omz ${kind%s} $name"
     else
-      info "installing omz plugin $name"
-      git clone --depth 1 -- "$url" "$custom/plugins/$name"
+      info "installing omz ${kind%s} $name"
+      git clone --depth 1 -- "$url" "$custom/$kind/$name"
     fi
   done < "$manifest"
+}
+
+apply_omz_custom() {
+  apply_omz_kind plugins
+  apply_omz_kind themes
 }
 
 link_zsh() {
@@ -98,6 +104,9 @@ link_zsh() {
   else
     log "skip   zshrc (none in repo yet — run 'envsync adopt')"
   fi
+  [[ -f "$SHARED_DIR/zsh/p10k.zsh" ]] \
+    && link_file "$SHARED_DIR/zsh/p10k.zsh" "$HOME/.p10k.zsh"
+  return 0
 }
 
 apply_git_aliases() {
@@ -210,6 +219,7 @@ shared_adopt() {
     # shellcheck disable=SC2016  # literal snippet, must not expand here
     warn '  for f in "$HOME"/.secrets/*(N.); do source "$f"; done'
   fi
+  adopt_file "$HOME/.p10k.zsh" "$SHARED_DIR/zsh/p10k.zsh"
 
   info "adopt claude config (skills, agents, commands, rules)"
   local item rel file src
@@ -282,15 +292,15 @@ capture_versions() {
   done
 }
 
-capture_omz_custom() {
-  local custom="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
-  [[ -d "$custom/plugins" ]] || return 0
-  info "capture Oh My Zsh custom plugins"
+capture_omz_kind() {
+  local kind="$1" custom="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
+  [[ -d "$custom/$kind" ]] || return 0
+  info "capture Oh My Zsh custom $kind"
   mkdir -p "$SHARED_DIR/zsh"
-  local out="$SHARED_DIR/zsh/omz-custom-plugins.txt" dir name url
+  local out="$SHARED_DIR/zsh/omz-custom-$kind.txt" dir name url
   {
-    printf '# Oh My Zsh custom plugins (name<TAB>git-url) — managed by envsync\n'
-    for dir in "$custom/plugins"/*/; do
+    printf '# Oh My Zsh custom %s (name<TAB>git-url) — managed by envsync\n' "$kind"
+    for dir in "$custom/$kind"/*/; do
       [[ -d "$dir/.git" ]] || continue
       name="$(basename "$dir")"
       url="$(git -C "$dir" remote get-url origin 2>/dev/null || true)"
@@ -299,6 +309,11 @@ capture_omz_custom() {
       [[ -n "$url" ]] && printf '%s\t%s\n' "$name" "$url"
     done
   } > "$out"
+}
+
+capture_omz_custom() {
+  capture_omz_kind plugins
+  capture_omz_kind themes
 }
 
 shared_capture() {

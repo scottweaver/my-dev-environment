@@ -1,0 +1,2 @@
+# Oh My Zsh custom themes (name<TAB>git-url) — managed by envsync
+powerlevel10k	https://github.com/romkatv/powerlevel10k.git
