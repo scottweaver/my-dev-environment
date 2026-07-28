@@ -47,7 +47,7 @@ envsync push       # capture manifests + commit + push
 | `envsync install` | Bootstrap or refresh this machine from the repo. Idempotent. |
 | `envsync adopt` | First-time: move this machine's existing dotfiles into the repo, then symlink back. |
 | `envsync capture` | Refresh machine-state manifests: Brewfile (macOS), Flatpaks (Bazzite), VS Code extensions, npm globals, OMZ custom plugins, toolchain versions. |
-| `envsync push [msg]` | `capture` + commit on a short-lived branch + PR with auto-merge. Merges itself once the CI secret-scan checks pass. Needs `gh` (authenticated). |
+| `envsync push [msg]` | `capture` + commit on a short-lived branch + PR with auto-merge. Merges itself once the CI secret-scan checks pass. Installs the `gh` CLI and walks through GitHub login automatically if needed (brew on macOS, release binary into `~/.local/bin` on Bazzite). |
 | `envsync pull` | Pull from GitHub, then re-apply (`install`). |
 | `envsync status` | Show drift: repo vs remote, package manifests vs installed, extensions, broken links. |
 | `envsync scan` | Scan the repo working tree for tokens/keys/credentials. Runs automatically before every `push` and blocks the push on findings (override: `DEV_ENV_ALLOW_SECRETS=1`). |

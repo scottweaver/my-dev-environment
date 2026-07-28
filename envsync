@@ -18,7 +18,8 @@
 #   envsync install         bootstrap/refresh this machine from the repo
 #   envsync adopt           first-time: move this machine's dotfiles INTO the repo
 #   envsync capture         refresh machine-state manifests (Brewfile, extensions, ...)
-#   envsync push [message]  scan + capture + commit + auto-merge PR (needs gh)
+#   envsync push [message]  scan + capture + commit + auto-merge PR
+#                           (installs + logs into the gh CLI if needed)
 #   envsync pull            pull from GitHub + re-apply (install)
 #   envsync status          show drift between machine, repo, and GitHub
 #   envsync scan            scan the repo working tree for secrets/tokens
@@ -130,6 +131,58 @@ adopt_file() {
 
 require_repo() {
   [[ -d "$REPO_DIR/.git" ]] || die "repo not found at $REPO_DIR — run 'envsync install' first"
+}
+
+# Install the GitHub CLI without a package manager: official release binary
+# into ~/.local/bin (used on Bazzite, where the OS image is immutable).
+install_gh_binary() {
+  local arch ver url tmp
+  case "$(uname -m)" in
+    x86_64)        arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) die "unsupported architecture for gh binary install: $(uname -m)" ;;
+  esac
+  # Resolve the latest release tag from the /releases/latest redirect.
+  ver="$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+    https://github.com/cli/cli/releases/latest)" || die "could not reach github.com"
+  ver="${ver##*/tag/v}"
+  [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "could not determine latest gh version (got: $ver)"
+  url="https://github.com/cli/cli/releases/download/v${ver}/gh_${ver}_linux_${arch}.tar.gz"
+  info "downloading gh v${ver} (${arch})"
+  tmp="$(mktemp -d)"
+  curl -fsSL "$url" | tar -xz -C "$tmp"
+  mkdir -p "$HOME/.local/bin"
+  install -m 0755 "$tmp/gh_${ver}_linux_${arch}/bin/gh" "$HOME/.local/bin/gh"
+  rm -rf "$tmp"
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *) PATH="$HOME/.local/bin:$PATH" ;;   # for the rest of this run
+  esac
+}
+
+# gh is required for 'envsync push' (PR flow). Install it if missing, log in
+# if needed (browser device flow — gh handles the OAuth, we never see
+# credentials), and set gh up as git's credential helper for github.com.
+ensure_gh() {
+  if ! have gh; then
+    info "GitHub CLI (gh) not found — installing"
+    if have brew; then
+      brew install gh
+    elif [[ "$OS" == linux ]]; then
+      install_gh_binary
+    else
+      die "cannot install gh automatically here — install it manually and re-run"
+    fi
+    have gh || die "gh installation failed"
+  fi
+  if ! gh auth status >/dev/null 2>&1; then
+    [[ -t 0 ]] || die "gh is not logged in and this is not a terminal — run 'gh auth login' first"
+    info "gh is not logged in — opening GitHub's browser login (device flow)"
+    gh auth login --hostname github.com --git-protocol https --web \
+      || die "GitHub login failed or was cancelled"
+  fi
+  gh auth setup-git --hostname github.com 2>/dev/null || true
+  log "ok     gh ($(gh api user --jq .login 2>/dev/null || echo 'authenticated'))"
 }
 
 # ------------------------------------------------------------- partitions ---
@@ -246,8 +299,7 @@ cmd_capture() {
 # created with auto-merge on and merges itself once the checks are green.
 cmd_push() {
   require_repo
-  have gh || die "push needs the GitHub CLI: brew install gh && gh auth login"
-  gh auth status >/dev/null 2>&1 || die "gh is not authenticated — run 'gh auth login'"
+  ensure_gh
   cmd_capture
   if ! run_secret_scan; then
     if [[ "${DEV_ENV_ALLOW_SECRETS:-0}" == 1 ]]; then
