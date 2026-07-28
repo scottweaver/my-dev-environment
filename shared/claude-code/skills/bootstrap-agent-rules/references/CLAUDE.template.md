@@ -1,0 +1,42 @@
+# {{PROJECT_NAME}}
+
+{{One- or two-paragraph project description: what this is, the stack,
+and the one-sentence goal. Keep it short — details belong in
+ARCHITECTURE.md and the README.}}
+
+## Agent memory and rules
+
+This file is the shared memory root for **all** agents working on the
+project — Claude Code, Cowork, and any others. `AGENTS.md` is a
+symlink to this file so tools reading either name get identical
+content. Durable project knowledge belongs in this file or in
+`.claude/rules/` — not in any tool-private memory store — so the
+human and every agent can read and modify it.
+
+All files in `.claude/rules/` are loaded each turn. Use this table to
+decide which file is authoritative for a given decision.
+
+| For decisions about...                                  | Authority                |
+| ------------------------------------------------------- | ------------------------ |
+{{RUST_ROW}}| Rust style, type discipline, FP conventions             | `RUST_BEST_PRACTICES.md` |
+{{TS_ROW}}| TypeScript style, type discipline                       | `TS_BEST_PRACTICES.md`   |
+| Workflow: branching, PRs, refactors, post-merge cleanup | `METHODOLOGIES.md`       |
+| Binding architecture constraints                        | `ARCHITECTURE.md`        |
+{{LINEAR_ROW}}| Linear tickets (drafting, creating, transitions)        | `LINEAR.md`              |
+{{PROJECT_ROW}}| Bindings for portable skills (stand-up, wrap-up)        | `PROJECT.md`             |
+| Current project state, in-flight work, what's next      | `STATE.md`               |
+
+`STATE.md` is the rehydration document: every agent session starts by
+reading it. Stable architecture docs win over `STATE.md` on questions
+of intended shape; `STATE.md` wins on what is actually in flight
+right now.
+
+## Top-level defaults
+
+- Confirm before destructive operations (branch deletion, history
+  rewrite, file deletion outside `/tmp`).
+- Draft tickets in chat before creating them.
+- New feature work starts on a new branch; PRs open only when the
+  work moves the needle (see METHODOLOGIES.md).
+- Non-trivial designs go through an interactive design dialog before
+  implementation.
