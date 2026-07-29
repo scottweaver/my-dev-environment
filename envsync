@@ -63,12 +63,68 @@ esac
 
 timestamp="$(date +%Y%m%d-%H%M%S)"
 
+# ----------------------------------------------------------------- style ---
+
+# Colors + symbols only when stdout is a terminal. Pipes, CI, and logs get
+# the classic plain output untouched. Override: DEV_ENV_COLOR=always|never;
+# NO_COLOR is respected.
+use_color=0
+case "${DEV_ENV_COLOR:-auto}" in
+  always) use_color=1 ;;
+  never)  use_color=0 ;;
+  *) [[ -t 1 && "${TERM:-dumb}" != dumb && -z "${NO_COLOR:-}" ]] && use_color=1 ;;
+esac
+if [[ "$use_color" == 1 ]]; then
+  C_RESET=$'\033[0m'  C_BOLD=$'\033[1m'    C_DIM=$'\033[2m'
+  C_RED=$'\033[31m'   C_GREEN=$'\033[32m'  C_YELLOW=$'\033[33m'
+  C_CYAN=$'\033[36m'  C_MAGENTA=$'\033[35m'
+else
+  C_RESET='' C_BOLD='' C_DIM='' C_RED='' C_GREEN='' C_YELLOW='' C_CYAN='' C_MAGENTA=''
+fi
+
 # --------------------------------------------------------------- helpers ---
 
-log()  { printf '%s\n' "$*"; }
-info() { printf '==> %s\n' "$*"; }
-warn() { printf 'warning: %s\n' "$*" >&2; }
-die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
+# log() styles the well-known verb prefixes ("ok", "link", ...) on TTYs and
+# passes everything through verbatim otherwise, so no call site changes.
+log() {
+  local line="$*" verb rest
+  if [[ "$use_color" != 1 ]]; then printf '%s\n' "$line"; return; fi
+  read -r verb rest <<<"$line"
+  case "$verb" in
+    ok)          printf '  %s %s\n' "${C_GREEN}✓${C_RESET}" "$rest" ;;
+    link)        printf '  %s %s\n' "${C_CYAN}+${C_RESET}" "$rest" ;;
+    relink)      printf '  %s %s\n' "${C_CYAN}↻${C_RESET}" "$rest" ;;
+    set)         printf '  %s %s\n' "${C_GREEN}✓${C_RESET}" "$rest" ;;
+    backup)      printf '  %s %s\n' "${C_YELLOW}⧉${C_RESET}" "$rest" ;;
+    adopt|migrate) printf '  %s %s\n' "${C_MAGENTA}⤴${C_RESET}" "$rest" ;;
+    skip|note)   printf '  %s %s\n' "${C_DIM}·${C_RESET}" "${C_DIM}${rest}${C_RESET}" ;;
+    UNLINKED|MISSING|UNSET) printf '  %s %s %s\n' "${C_RED}✗${C_RESET}" "${C_RED}${verb}${C_RESET}" "$rest" ;;
+    *)           printf '%s\n' "$line" ;;
+  esac
+}
+info() {
+  if [[ "$use_color" == 1 ]]; then printf '%s\n' "${C_BOLD}▸ $*${C_RESET}"
+  else printf '==> %s\n' "$*"; fi
+}
+# Section banner for partition/hook boundaries.
+section() {
+  if [[ "$use_color" == 1 ]]; then printf '%s\n' "${C_BOLD}${C_CYAN}── $* ──${C_RESET}"
+  else printf '==> [%s]\n' "$*"; fi
+}
+# Loud green finale for a completed command.
+success() {
+  if [[ "$use_color" == 1 ]]; then printf '%s\n' "${C_GREEN}${C_BOLD}✓ $*${C_RESET}"
+  else printf '%s\n' "$*"; fi
+}
+warn() {
+  if [[ "$use_color" == 1 ]]; then printf '  %s %s\n' "${C_YELLOW}⚠${C_RESET}" "${C_YELLOW}$*${C_RESET}" >&2
+  else printf 'warning: %s\n' "$*" >&2; fi
+}
+die() {
+  if [[ "$use_color" == 1 ]]; then printf '%s %s\n' "${C_RED}${C_BOLD}✗ error:${C_RESET}" "$*" >&2
+  else printf 'error: %s\n' "$*" >&2; fi
+  exit 1
+}
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # gh resolves its target repo from the current directory; envsync must work
@@ -216,7 +272,7 @@ run_partitions() {
   for part in $PARTITIONS; do
     fn="${part}_${hook}"
     if declare -F "$fn" >/dev/null 2>&1; then
-      info "[$part] $hook"
+      section "$part · $hook"
       "$fn"
       log ""
     fi
@@ -283,8 +339,8 @@ cmd_install() {
   ensure_repo
   load_partitions
   run_partitions install
-  log "install done ($OS: $PARTITIONS)."
-  log "New machine? Run 'envsync adopt' if it has config the repo doesn't."
+  success "install done ($OS: $PARTITIONS)"
+  log "note New machine? Run 'envsync adopt' if it has config the repo doesn't."
 }
 
 cmd_adopt() {
@@ -292,14 +348,16 @@ cmd_adopt() {
   load_partitions
   run_partitions adopt
   run_partitions capture
-  log "adopt done. Review with 'envsync status', then 'envsync push'."
+  success "adopt done"
+  log "note Review with 'envsync status', then 'envsync push'."
 }
 
 cmd_capture() {
   require_repo
   load_partitions
   run_partitions capture
-  log "capture done. Review with 'envsync status', then 'envsync push'."
+  success "capture done"
+  log "note Review with 'envsync status', then 'envsync push'."
 }
 
 # Push via a short-lived PR: main is protected (required secret-scan checks,
@@ -363,7 +421,7 @@ cmd_push() {
   if [[ "$state" == MERGED ]]; then
     git -C "$REPO_DIR" pull --rebase origin "$base"
     git -C "$REPO_DIR" branch -D "$branch" >/dev/null 2>&1 || true
-    log "merged + local $base synced"
+    success "merged + local $base synced"
   else
     warn "PR not merged yet (state: ${state:-unknown}) — it will auto-merge when ready;"
     warn "  run 'envsync pull' afterwards to sync local $base"
@@ -399,7 +457,25 @@ cmd_agent_sync() {
 }
 
 cmd_help() {
-  sed -n '2,/^# Idempotent/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  local B="$C_BOLD" D="$C_DIM" G="$C_CYAN" R="$C_RESET"
+  printf '%s\n' "${B}${G}envsync${R} ${D}— one repo, every machine${R}"
+  printf '\n'
+  printf '  %s\n' "${B}Usage:${R} envsync <command> [args]"
+  printf '\n'
+  printf '  %s %s\n' "${G}install${R}          " "bootstrap or refresh this machine from the repo"
+  printf '  %s %s\n' "${G}adopt${R}            " "first time: move this machine's dotfiles INTO the repo"
+  printf '  %s %s\n' "${G}capture${R}          " "refresh machine-state manifests (Brewfile, extensions, ...)"
+  printf '  %s %s\n' "${G}push${R} [msg]       " "scan + capture + commit + auto-merge PR to GitHub"
+  printf '  %s %s\n' "${G}pull${R}             " "pull from GitHub + re-apply (install)"
+  printf '  %s %s\n' "${G}status${R}           " "show drift between machine, repo, and GitHub"
+  printf '  %s %s\n' "${G}scan${R}             " "scan the repo working tree for secrets/tokens"
+  printf '  %s %s\n' "${G}agent-sync${R} [..]  " "mirror the CURRENT project's .claude/rules into .cursor/rules"
+  printf '\n'
+  printf '  %s %s\n' "${B}Partitions:${R}" "$PARTITIONS ${D}(detected: $OS)${R}"
+  printf '  %s %s\n' "${B}Repo:${R}      " "$REPO_DIR"
+  printf '  %s %s\n' "${B}Config:${R}    " "${D}DEV_ENV_REPO_URL, DEV_ENV_HOME, DEV_ENV_COLOR=always|never|auto${R}"
+  printf '\n'
+  printf '  %s\n' "${D}Idempotent; safe to re-run. Docs: README.md${R}"
 }
 
 # ------------------------------------------------------------------ main ---
