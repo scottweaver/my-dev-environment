@@ -41,14 +41,14 @@ Branch on `tracker`.
 
 #### Linear branch
 
-Query Linear for issues assigned to `linear.assignee_id` that **transitioned** into `In Progress`, `In Review`, or `Done` inside the window. Use `LINEAR_API_KEY` from env — always `source ~/.zshrc` first; if it's not set after sourcing, stop and tell the user.
+Query Linear for issues assigned to `linear.assignee_id` that **transitioned** into `In Progress`, `In Review`, or `Done` inside the window. Use `LINEAR_API_KEY` from env — load per-machine secrets first (`for f in ~/.secrets/*; do [ -f "$f" ] && . "$f"; done`; never read or print those files); if the key isn't set after loading, stop and tell the user.
 
 **Network heads-up:** `api.linear.app` is not in the default shell sandbox allowlist. The first `curl` of a session needs elevated network permissions; request them up front rather than retrying on a `403 CONNECT tunnel` error.
 
 The query asks for issue `history` so we can filter on *state-change events* inside the window — not just any field update (the issue's `updatedAt` bumps for comments, labels, cycle moves, auto-merge metadata, etc., which produces false positives).
 
 ```bash
-source ~/.zshrc
+for f in ~/.secrets/*; do [ -f "$f" ] && . "$f"; done
 SINCE="<UTC ISO start of last working day>"
 ASSIGNEE="<linear.assignee_id from PROJECT.md>"
 
