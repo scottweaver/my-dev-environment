@@ -71,6 +71,11 @@ warn() { printf 'warning: %s\n' "$*" >&2; }
 die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# gh resolves its target repo from the current directory; envsync must work
+# from ANY directory (git has -C for this, gh does not), so gh runs with the
+# repo checkout as cwd.
+ghr() { (cd "$REPO_DIR" && gh "$@"); }
+
 # Symlink src into place at dest.
 #   - already-correct symlink -> no-op
 #   - symlink elsewhere       -> re-link
@@ -334,13 +339,13 @@ cmd_push() {
   git -C "$REPO_DIR" checkout -q -B "$branch"
   git -C "$REPO_DIR" diff --cached --quiet || git -C "$REPO_DIR" commit -m "$msg"
   git -C "$REPO_DIR" push -u origin "$branch"
-  gh pr create --base "$base" --head "$branch" \
+  ghr pr create --base "$base" --head "$branch" \
     --title "$msg" --body "Automated envsync push from $host."
-  gh pr merge --auto --squash --delete-branch "$branch"
+  ghr pr merge --auto --squash --delete-branch "$branch"
 
   info "waiting for required checks (Ctrl-C is safe: PR auto-merges on green)"
   sleep 5   # give the workflow a moment to report its checks
-  if ! gh pr checks "$branch" --watch --fail-fast; then
+  if ! ghr pr checks "$branch" --watch --fail-fast; then
     git -C "$REPO_DIR" checkout -q "$base"
     warn "checks FAILED — PR left open for fixing: gh pr view $branch --web"
     return 1
@@ -350,7 +355,7 @@ cmd_push() {
   # bring local main up to date and drop the local branch.
   local i state
   for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-    state="$(gh pr view "$branch" --json state -q .state 2>/dev/null || echo '')"
+    state="$(ghr pr view "$branch" --json state -q .state 2>/dev/null || echo '')"
     [[ "$state" == MERGED ]] && break
     sleep 3
   done
