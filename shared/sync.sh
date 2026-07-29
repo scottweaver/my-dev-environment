@@ -331,11 +331,26 @@ capture_omz_custom() {
   capture_omz_kind themes
 }
 
+# New files created directly under ~/.claude (a fresh skill, agent, ...)
+# are invisible to capture/push until adopted — say so instead of letting
+# 'push' silently report nothing to do.
+warn_unadopted_claude() {
+  local unadopted
+  unadopted="$(find "$HOME/.claude/skills" "$HOME/.claude/agents" \
+      "$HOME/.claude/commands" "$HOME/.claude/hooks" \
+      -type f 2>/dev/null | head -10)"
+  [[ -n "$unadopted" ]] || return 0
+  warn "unadopted files under ~/.claude (not synced until you run 'envsync adopt'):"
+  local f
+  while IFS= read -r f; do warn "  ${f#"$HOME"/}"; done <<<"$unadopted"
+}
+
 shared_capture() {
   capture_vscode
   capture_npm_globals
   capture_versions
   capture_omz_custom
+  warn_unadopted_claude
 }
 
 # ----------------------------------------------------------------- status ---
