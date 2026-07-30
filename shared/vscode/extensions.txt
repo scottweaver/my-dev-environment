@@ -2,10 +2,12 @@ anthropic.claude-code
 bierner.emojisense
 coenraads.disableligatures
 dbaeumer.vscode-eslint
+dracula-theme.theme-dracula
 eamodio.gitlens
 esbenp.prettier-vscode
 fabiospampinato.vscode-diff
 foxundermoon.shell-format
+github.vscode-pull-request-github
 jozefchmelar.compare
 ms-azuretools.vscode-containers
 ms-azuretools.vscode-docker
@@ -34,7 +36,7 @@ twxs.cmake
 unifiedjs.vscode-mdx
 vadimcn.vscode-lldb
 vitest.explorer
-vsciot-vscode.vscode-arduino
 vscodevim.vim
 wmanth.jar-viewer
 yzhang.markdown-all-in-one
+zhuangtongfa.material-theme
