@@ -29,6 +29,9 @@ return {
               -- Generate with `claude setup-token`, then put in a file under
               -- ~/.secrets/:  export CLAUDE_CODE_OAUTH_TOKEN=...
               CLAUDE_CODE_OAUTH_TOKEN = os.getenv "CLAUDE_CODE_OAUTH_TOKEN" or "",
+              -- Pin the editor chat to Fable 5 (overridable per machine
+              -- by exporting ANTHROPIC_MODEL before launching nvim).
+              ANTHROPIC_MODEL = os.getenv "ANTHROPIC_MODEL" or "claude-fable-5",
             },
           })
         end,
