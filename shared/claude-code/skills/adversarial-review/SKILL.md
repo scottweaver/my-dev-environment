@@ -136,6 +136,18 @@ bespoke charter (security, performance, migration safety) when the
 diff warrants it, or a re-run after fixes land. Don't loop
 automatically; adversarial review is a gate, not a daemon.
 
+## Operational notes
+
+- Background agents do not survive a harness reload (`/reload-skills`,
+  window/session restart): the task registry drops them mid-run and
+  no completion notification ever fires. Symptoms: `ListAgents` and
+  `TaskOutput` no longer know the IDs, and the agents' worktrees sit
+  orphaned under `.claude/worktrees/agent-*` (a clean completion
+  auto-removes an unchanged worktree). Recovery: check the orphaned
+  worktrees are clean (`git -C <worktree> status --short`), remove
+  them (`git worktree remove`), relaunch the pair. Avoid reloading
+  skills or restarting the session while a review pair is in flight.
+
 ## Project wiring (optional)
 
 A project may bind this into its flow: a line in its methodology doc
