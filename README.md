@@ -47,8 +47,12 @@ envsync push       # capture manifests + commit + push
 | `envsync install` | Bootstrap or refresh this machine from the repo. Idempotent. |
 | `envsync adopt` | First-time: move this machine's existing dotfiles into the repo, then symlink back. |
 | `envsync capture` | Refresh machine-state manifests: Brewfile (macOS), Flatpaks (Bazzite), VS Code extensions, npm globals, OMZ custom plugins, toolchain versions. |
-| `envsync push [msg]` | `capture` + commit on a short-lived branch + PR with auto-merge. Merges itself once the CI secret-scan checks pass. Installs the `gh` CLI and walks through GitHub login automatically if needed (brew on macOS, release binary into `~/.local/bin` on Bazzite). |
-| `envsync pull` | Pull from GitHub, then re-apply (`install`). |
+| `envsync push [msg]` | Sync local `main` → `capture` → commit on a short-lived branch → PR → wait for the CI checks → merge → return to `main` with the merged result pulled. Installs the `gh` CLI and walks through GitHub login automatically if needed (brew on macOS, release binary into `~/.local/bin` on Bazzite). Falls back to `usb push` when GitHub is unreachable and a thumb drive is present. |
+| `envsync pull` | Pull from GitHub, then re-apply (`install`). Falls back to `usb pull` when GitHub is unreachable. |
+| `envsync usb init <drive>` | Set up a thumb drive as a portable fallback upstream + install source: bare repo (`my-dev-environment.git`) plus a bootstrap copy of `envsync` at the drive root. |
+| `envsync usb push [msg]` | Offline push: `capture` + commit **directly on local `main`** + sync the drive. No PR/CI — the commits ride the next online `envsync push` as its PR, so branch protection still gates GitHub. The secret scan still runs and still blocks. |
+| `envsync usb pull` | Fast-forward local `main` from the drive, then re-apply (`install`). |
+| `envsync usb status` | Show where the drive is mounted and how far local `main` is ahead/behind it. |
 | `envsync status` | Show drift: repo vs remote, package manifests vs installed, extensions, broken links. |
 | `envsync scan` | Scan the repo working tree for tokens/keys/credentials. Runs automatically before every `push` and blocks the push on findings (override: `DEV_ENV_ALLOW_SECRETS=1`). |
 | `envsync agent-sync [args]` | Run [agent-sync](shared/bin/agent-sync) in the **current project**: mirror its `.claude/rules/*.md` into `.cursor/rules/*.mdc` so Cursor loads the same rules as Claude Code. Pass-through args: `--check`, `--watch`, `--clean`, `--help`. Aliases: `agentsync`, `rules`. |
@@ -71,6 +75,35 @@ Two models, by file type:
 
 Typical loop: change something → `envsync push` here → `envsync pull` on the
 other machine (Mac or Bazzite — each applies only its own partitions).
+
+## Thumb-drive fallback
+
+For when GitHub is unreachable (or a machine has no account access), a thumb
+drive can stand in as a **portable, detached upstream** and as an **initial
+install source**. One-time setup, with the drive plugged in:
+
+```sh
+envsync usb init /Volumes/<drive>
+```
+
+That puts a bare repo (`my-dev-environment.git`) and a bootstrap copy of
+`envsync` at the drive root. From then on the drive is auto-detected (scan of
+`/Volumes`, `/run/media/$USER`, `/media/$USER`; override with `DEV_ENV_USB`)
+and addressed by its mount path at each use — no git remote is stored, so
+nothing goes stale when the volume name or OS changes.
+
+* **Offline push/pull**: `envsync push` and `envsync pull` probe GitHub first
+  and automatically divert to the drive when it's unreachable (or use
+  `envsync usb push` / `usb pull` explicitly). Offline commits land directly
+  on local `main` and are carried up as a normal CI-gated PR by the next
+  online `envsync push`.
+* **Bootstrap a new machine with no GitHub access**:
+  `bash /Volumes/<drive>/envsync install` clones from the drive and wires
+  `origin` back to GitHub for later.
+* **Freshness**: every successful online `envsync push` also refreshes a
+  plugged-in drive. If a squash-merge rewrote history the drive still holds,
+  the refresh parks the drive's old tip under `refs/backup/` in the drive
+  repo before overwriting — nothing is ever silently discarded.
 
 ## Repo layout
 
@@ -103,7 +136,8 @@ The Linux-era installers (`install-env.sh`, `install-agents.sh`,
 everything they do.
 
 Config overrides: `DEV_ENV_REPO_URL` (remote), `DEV_ENV_HOME` (checkout path,
-default `~/Projects/my-dev-environment`).
+default `~/Projects/my-dev-environment`), `DEV_ENV_USB` (thumb-drive mount
+point, default auto-detect).
 
 ## Secrets
 

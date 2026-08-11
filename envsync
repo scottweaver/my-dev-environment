@@ -22,6 +22,13 @@
 #                           merges, then resyncs local main with the result
 #                           (installs + logs into the gh CLI if needed)
 #   envsync pull            pull from GitHub + re-apply (install)
+#   envsync usb init <path> set up a thumb drive as a portable fallback
+#                           upstream and install source (bare repo +
+#                           bootstrap copy of this script at the drive root)
+#   envsync usb push [msg]  capture + commit on local main + sync the drive
+#                           (no PR/CI; commits ride the next online push)
+#   envsync usb pull        fast-forward local main from the drive + install
+#   envsync usb status      show drive location and drift vs local main
 #   envsync status          show drift between machine, repo, and GitHub
 #   envsync scan            scan the repo working tree for secrets/tokens
 #   envsync agent-sync [..] mirror the CURRENT project's .claude/rules into
@@ -29,9 +36,14 @@
 #                           --watch, --clean; see 'envsync agent-sync --help')
 #   envsync help
 #
+# push, pull, and install fall back to the thumb drive automatically when
+# GitHub is unreachable.
+#
 # Config (override via environment):
 #   DEV_ENV_REPO_URL   git remote (default: https://github.com/scottweaver/my-dev-environment.git)
 #   DEV_ENV_HOME       local checkout location (default: ~/Projects/my-dev-environment)
+#   DEV_ENV_USB        thumb-drive mount point or its bare-repo path
+#                      (default: auto-detect under /Volumes, /run/media)
 #
 # Idempotent; safe to re-run. Compatible with macOS's stock bash 3.2.
 
@@ -282,13 +294,55 @@ run_partitions() {
 
 # ---------------------------------------------------------------- pieces ---
 
+# Cheap reachability probe (5s cap) so an offline machine falls back to
+# the thumb drive instead of hanging in git/gh network calls. Probes the
+# repo host over https; a captive portal can fool it, but then the normal
+# network errors surface downstream.
+origin_reachable() {
+  local host
+  case "$DEV_ENV_REPO_URL" in
+    *://*) host="${DEV_ENV_REPO_URL#*://}"; host="${host##*@}"; host="${host%%[/:]*}" ;;
+    *@*)   host="${DEV_ENV_REPO_URL#*@}";   host="${host%%[/:]*}" ;;
+    *)     host=github.com ;;
+  esac
+  curl -fsS -m 5 -o /dev/null "https://$host" 2>/dev/null
+}
+
+# Return the working tree to branch $1, carrying any uncommitted changes
+# across the switch (e.g. capture output left by an interrupted push).
+goto_branch() {
+  local base="$1" stashed=0
+  [[ "$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD)" == "$base" ]] && return 0
+  if ! git -C "$REPO_DIR" diff --quiet || ! git -C "$REPO_DIR" diff --cached --quiet; then
+    git -C "$REPO_DIR" stash push --quiet -m "envsync: carry uncommitted changes to $base"
+    stashed=1
+  fi
+  git -C "$REPO_DIR" checkout -q "$base"
+  if [[ "$stashed" == 1 ]]; then
+    git -C "$REPO_DIR" stash pop --quiet \
+      || die "could not re-apply stashed changes onto $base — resolve in $REPO_DIR (git status), then re-run"
+  fi
+}
+
 ensure_repo() {
   if [[ -d "$REPO_DIR/.git" ]]; then
     log "ok     repo at $REPO_DIR"
-  else
+    return 0
+  fi
+  local usb
+  if origin_reachable; then
     info "cloning $DEV_ENV_REPO_URL -> $REPO_DIR"
     mkdir -p "$(dirname "$REPO_DIR")"
     git clone "$DEV_ENV_REPO_URL" "$REPO_DIR"
+  elif usb="$(usb_repo_path)"; then
+    info "GitHub unreachable — cloning from thumb drive ($usb)"
+    mkdir -p "$(dirname "$REPO_DIR")"
+    git clone "$usb" "$REPO_DIR"
+    # Point origin at GitHub for when it's back; the drive is addressed by
+    # its detected mount path at each use, never by a stored remote.
+    git -C "$REPO_DIR" remote set-url origin "$DEV_ENV_REPO_URL"
+  else
+    die "cannot reach $DEV_ENV_REPO_URL and no thumb drive found — get online or plug in the drive"
   fi
 }
 
@@ -334,6 +388,88 @@ run_secret_scan() {
   log "ok     no secrets detected"
 }
 
+# -------------------------------------------------------------- usb drive ---
+
+# A thumb drive can serve as a portable, detached upstream and as an
+# install source when GitHub is unreachable. Layout at the drive root:
+#   my-dev-environment.git/   bare repo (HEAD -> main)
+#   envsync                   bootstrap copy of this script
+# The drive is always addressed by the mount path detected at use time —
+# never a stored git remote — so a volume path from another machine or OS
+# can't go stale in the repo config.
+
+# Print the drive's bare-repo path, or fail if no drive is present.
+# DEV_ENV_USB (drive root or the bare repo itself) wins; otherwise scan
+# the standard removable-media mount roots.
+usb_repo_path() {
+  local name="my-dev-environment.git" cand root
+  if [[ -n "${DEV_ENV_USB:-}" ]]; then
+    for cand in "$DEV_ENV_USB" "$DEV_ENV_USB/$name"; do
+      if [[ -f "$cand/HEAD" && -d "$cand/objects" ]]; then
+        printf '%s\n' "$cand"; return 0
+      fi
+    done
+    return 1
+  fi
+  for root in /Volumes "/run/media/${USER:-}" "/media/${USER:-}"; do
+    [[ -d "$root" ]] || continue
+    for cand in "$root"/*/"$name"; do
+      if [[ -f "$cand/HEAD" && -d "$cand/objects" ]]; then
+        printf '%s\n' "$cand"; return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# Refresh the drive from local main (branch push + HEAD symref + bootstrap
+# script copy). Modes:
+#   ff (default)  fast-forward only — offline pushes must never rewrite
+#                 the drive; non-ff means it holds work this machine lacks.
+#   mirror        local main is freshly synced with GitHub (the source of
+#                 truth), so overwrite even when a squash-merge rewrote the
+#                 history behind an offline commit, parking the drive's old
+#                 tip under refs/backup/ in the drive repo first.
+usb_refresh() {
+  local dest="$1" mode="${2:-ff}" old
+  if ! git -C "$REPO_DIR" push -q "$dest" main:main 2>/dev/null; then
+    if [[ "$mode" != mirror ]]; then
+      warn "drive has commits this machine lacks — run 'envsync usb pull' first"
+      return 1
+    fi
+    old="$(git -C "$dest" rev-parse --quiet --verify refs/heads/main || true)"
+    if [[ -n "$old" ]]; then
+      git -C "$dest" update-ref "refs/backup/main-$timestamp" "$old"
+    fi
+    git -C "$REPO_DIR" push -q --force "$dest" main:main
+  fi
+  git -C "$dest" symbolic-ref HEAD refs/heads/main
+  cp "$REPO_DIR/envsync" "$(dirname "$dest")/envsync"
+  chmod 0755 "$(dirname "$dest")/envsync" 2>/dev/null || true
+  log "ok     drive synced ($(dirname "$dest"))"
+}
+
+# Opportunistically mirror a plugged-in drive after a successful GitHub
+# sync; a missing or unwritable drive is never an error.
+usb_refresh_if_present() {
+  local usb
+  usb="$(usb_repo_path)" || return 0
+  usb_refresh "$usb" mirror || warn "could not refresh the thumb drive at $(dirname "$usb")"
+}
+
+# One status line about the drive (shared by 'status' and 'usb status').
+usb_status_report() {
+  local usb ahead behind
+  usb="$(usb_repo_path)" || { log "note   thumb drive: none detected"; return 0; }
+  if git -C "$REPO_DIR" fetch -q "$usb" main 2>/dev/null; then
+    ahead="$(git -C "$REPO_DIR" rev-list --count FETCH_HEAD..main)"
+    behind="$(git -C "$REPO_DIR" rev-list --count main..FETCH_HEAD)"
+    log "ok     thumb drive: $usb (local main: $ahead ahead, $behind behind)"
+  else
+    log "note   thumb drive: $usb (empty — run 'envsync usb push')"
+  fi
+}
+
 # -------------------------------------------------------------- commands ---
 
 cmd_install() {
@@ -371,6 +507,14 @@ cmd_capture() {
 # kill the script stranded on the topic branch.
 cmd_push() {
   require_repo
+  if ! origin_reachable; then
+    if usb_repo_path >/dev/null; then
+      warn "GitHub unreachable — falling back to the thumb drive"
+      cmd_usb_push "$@"
+      return
+    fi
+    die "cannot reach GitHub and no thumb drive found (set one up with 'envsync usb init <drive>')"
+  fi
   ensure_gh
 
   # Sync BEFORE capture so manifests regenerate on top of an up-to-date
@@ -379,19 +523,8 @@ cmd_push() {
   # instead of wedging the branch switch.
   local base=main
   info "sync local $base with origin"
-  local stashed=0
-  if [[ "$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD)" != "$base" ]]; then
-    if ! git -C "$REPO_DIR" diff --quiet || ! git -C "$REPO_DIR" diff --cached --quiet; then
-      git -C "$REPO_DIR" stash push --quiet -m "envsync: carry uncommitted changes to $base"
-      stashed=1
-    fi
-    git -C "$REPO_DIR" checkout -q "$base"
-  fi
+  goto_branch "$base"
   git -C "$REPO_DIR" pull --rebase --autostash origin "$base"
-  if [[ "$stashed" == 1 ]]; then
-    git -C "$REPO_DIR" stash pop --quiet \
-      || die "could not re-apply stashed changes onto $base — resolve in $REPO_DIR (git status), then re-run"
-  fi
 
   cmd_capture
   if ! run_secret_scan; then
@@ -407,6 +540,7 @@ cmd_push() {
   ahead="$(git -C "$REPO_DIR" rev-list --count "origin/$base..HEAD" 2>/dev/null || echo 0)"
   if git -C "$REPO_DIR" diff --cached --quiet && [[ "$ahead" == 0 ]]; then
     log "nothing to push — repo already matches this machine"
+    usb_refresh_if_present
     return 0
   fi
 
@@ -456,6 +590,7 @@ cmd_push() {
     git -C "$REPO_DIR" pull --rebase origin "$base"
     git -C "$REPO_DIR" branch -D "$branch" >/dev/null 2>&1 || true
     success "PR merged + local $base synced"
+    usb_refresh_if_present
   else
     [[ -n "$merr" ]] && warn "merge failed: $merr"
     warn "PR NOT merged — merge it manually (gh pr view $branch --web), then run 'envsync pull'"
@@ -465,9 +600,121 @@ cmd_push() {
 
 cmd_pull() {
   require_repo
+  if ! origin_reachable; then
+    if usb_repo_path >/dev/null; then
+      warn "GitHub unreachable — pulling from the thumb drive"
+      cmd_usb_pull
+      return
+    fi
+    die "cannot reach GitHub and no thumb drive found"
+  fi
   info "pull from GitHub"
   git -C "$REPO_DIR" pull --rebase --autostash
   cmd_install
+}
+
+# ---------------------------------------------------------- usb commands ---
+
+cmd_usb_init() {
+  require_repo
+  local drive="${1:-}"
+  [[ -n "$drive" ]] || die "usage: envsync usb init /Volumes/<drive>  (the drive's mount point)"
+  [[ -d "$drive" ]] || die "not a directory: $drive"
+  local dest="$drive/my-dev-environment.git"
+  if [[ -f "$dest/HEAD" ]]; then
+    log "ok     $dest (already initialized)"
+  else
+    info "creating bare repo at $dest"
+    git init --bare -q "$dest"
+  fi
+  usb_refresh "$dest" mirror
+  success "thumb drive ready — auto-detected from now on (override: DEV_ENV_USB)"
+  log "note New machine bootstrap: bash $drive/envsync install"
+}
+
+# Offline counterpart of 'push': capture + commit straight onto local main.
+# No PR/CI — the required checks still gate GitHub, because these commits
+# ride the next online 'envsync push' as part of its PR. The secret scan
+# still runs and still blocks.
+cmd_usb_push() {
+  require_repo
+  local usb
+  usb="$(usb_repo_path)" \
+    || die "no thumb drive found — plug it in, or set one up with 'envsync usb init <drive>' (override: DEV_ENV_USB)"
+  info "push to thumb drive ($usb)"
+  goto_branch main
+  # Reconcile with the drive first, in case another machine parked
+  # offline work on it.
+  local mode=ff
+  if git -C "$REPO_DIR" fetch -q "$usb" main 2>/dev/null; then
+    if git -C "$REPO_DIR" merge-base --is-ancestor FETCH_HEAD main; then
+      :   # drive is behind or equal — nothing to take
+    elif git -C "$REPO_DIR" merge-base --is-ancestor main FETCH_HEAD; then
+      info "drive is ahead — taking its commits"
+      git -C "$REPO_DIR" rebase -q --autostash FETCH_HEAD
+    elif git -C "$REPO_DIR" diff --quiet FETCH_HEAD main; then
+      # Same content, different history: a squash-merge rewrote what the
+      # drive holds. Mirror it back into line.
+      mode=mirror
+    else
+      die "drive holds offline work this machine doesn't have — run 'envsync usb pull' first"
+    fi
+  fi
+  cmd_capture
+  if ! run_secret_scan; then
+    if [[ "${DEV_ENV_ALLOW_SECRETS:-0}" == 1 ]]; then
+      warn "DEV_ENV_ALLOW_SECRETS=1 set — pushing anyway"
+    else
+      die "push blocked by secret scan (fix the findings, or DEV_ENV_ALLOW_SECRETS=1 envsync usb push to override)"
+    fi
+  fi
+  git -C "$REPO_DIR" add -A
+  local host; host="$(hostname -s 2>/dev/null || hostname)"
+  host="$(printf '%s' "$host" | tr -c 'A-Za-z0-9.-' '-')"
+  if git -C "$REPO_DIR" diff --cached --quiet; then
+    log "nothing new to commit"
+  else
+    git -C "$REPO_DIR" commit -q -m "${1:-envsync (usb): $host $(date '+%Y-%m-%d %H:%M')}"
+  fi
+  usb_refresh "$usb" "$mode"
+  success "drive synced — commits land on GitHub with the next online 'envsync push'"
+}
+
+cmd_usb_pull() {
+  require_repo
+  local usb
+  usb="$(usb_repo_path)" || die "no thumb drive found — plug it in (override: DEV_ENV_USB)"
+  info "pull from thumb drive ($usb)"
+  goto_branch main
+  git -C "$REPO_DIR" fetch -q "$usb" main || die "drive repo at $usb has no main branch"
+  if git -C "$REPO_DIR" merge-base --is-ancestor FETCH_HEAD main; then
+    log "ok     local main already has everything on the drive"
+  elif git -C "$REPO_DIR" merge-base --is-ancestor main FETCH_HEAD; then
+    git -C "$REPO_DIR" rebase -q --autostash FETCH_HEAD
+    log "ok     fast-forwarded main to the drive"
+  elif git -C "$REPO_DIR" diff --quiet FETCH_HEAD main; then
+    log "ok     drive matches local content (history diverged after a squash-merge) — nothing to pull"
+  else
+    die "local main and the drive have diverged — to combine them: git -C $REPO_DIR pull --rebase $usb main ; if the drive is just stale, refresh it with 'envsync usb push'"
+  fi
+  cmd_install
+}
+
+cmd_usb_status() {
+  require_repo
+  usb_status_report
+}
+
+cmd_usb() {
+  local sub="${1:-status}"
+  shift || true
+  case "$sub" in
+    init)   cmd_usb_init "$@" ;;
+    push)   cmd_usb_push "$@" ;;
+    pull)   cmd_usb_pull "$@" ;;
+    status) cmd_usb_status ;;
+    *)      die "unknown usb command: $sub (init|push|pull|status)" ;;
+  esac
 }
 
 cmd_status() {
@@ -475,6 +722,7 @@ cmd_status() {
   info "repo: $REPO_DIR (partitions: $PARTITIONS)"
   git -C "$REPO_DIR" fetch --quiet 2>/dev/null || warn "could not reach remote (offline?)"
   git -C "$REPO_DIR" status -sb
+  usb_status_report
   log ""
   load_partitions
   run_partitions status
@@ -502,13 +750,16 @@ cmd_help() {
   printf '  %s %s\n' "${G}capture${R}          " "refresh machine-state manifests (Brewfile, extensions, ...)"
   printf '  %s %s\n' "${G}push${R} [msg]       " "capture + PR; waits for CI, merges, resyncs local main"
   printf '  %s %s\n' "${G}pull${R}             " "pull from GitHub + re-apply (install)"
+  printf '  %s %s\n' "${G}usb${R} <cmd>        " "thumb-drive fallback: init <drive> | push | pull | status"
   printf '  %s %s\n' "${G}status${R}           " "show drift between machine, repo, and GitHub"
   printf '  %s %s\n' "${G}scan${R}             " "scan the repo working tree for secrets/tokens"
   printf '  %s %s\n' "${G}agent-sync${R} [..]  " "mirror the CURRENT project's .claude/rules into .cursor/rules"
   printf '\n'
   printf '  %s %s\n' "${B}Partitions:${R}" "$PARTITIONS ${D}(detected: $OS)${R}"
   printf '  %s %s\n' "${B}Repo:${R}      " "$REPO_DIR"
-  printf '  %s %s\n' "${B}Config:${R}    " "${D}DEV_ENV_REPO_URL, DEV_ENV_HOME, DEV_ENV_COLOR=always|never|auto${R}"
+  printf '  %s %s\n' "${B}Config:${R}    " "${D}DEV_ENV_REPO_URL, DEV_ENV_HOME, DEV_ENV_USB, DEV_ENV_COLOR=always|never|auto${R}"
+  printf '\n'
+  printf '  %s\n' "${D}push, pull, and install fall back to the thumb drive when GitHub is unreachable.${R}"
   printf '\n'
   printf '  %s\n' "${D}Idempotent; safe to re-run. Docs: README.md${R}"
 }
@@ -524,6 +775,7 @@ main() {
     capture)        cmd_capture "$@" ;;
     push)           cmd_push "$@" ;;
     pull|update)    cmd_pull "$@" ;;
+    usb)            cmd_usb "$@" ;;
     status)         cmd_status "$@" ;;
     scan)           require_repo; run_secret_scan ;;
     agent-sync|agentsync|rules) cmd_agent_sync "$@" ;;
