@@ -7,4 +7,4 @@ python3  Python 3.9.6
 rustc    rustc 1.95.0 (59807616e 2026-04-14)
 cargo    cargo 1.95.0 (f2d3ce0bd 2026-03-21)
 java     java 21.0.5 2024-10-15 LTS
-brew     Homebrew 6.0.13
+brew     Homebrew 6.0.17
