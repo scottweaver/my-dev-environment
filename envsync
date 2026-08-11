@@ -18,7 +18,8 @@
 #   envsync install         bootstrap/refresh this machine from the repo
 #   envsync adopt           first-time: move this machine's dotfiles INTO the repo
 #   envsync capture         refresh machine-state manifests (Brewfile, extensions, ...)
-#   envsync push [message]  scan + capture + commit + auto-merge PR
+#   envsync push [message]  capture + scan + commit + PR; waits for CI,
+#                           merges, then resyncs local main with the result
 #                           (installs + logs into the gh CLI if needed)
 #   envsync pull            pull from GitHub + re-apply (install)
 #   envsync status          show drift between machine, repo, and GitHub
@@ -361,11 +362,37 @@ cmd_capture() {
 }
 
 # Push via a short-lived PR: main is protected (required secret-scan checks,
-# enforced for admins too), so nothing lands without CI passing. The PR is
-# created with auto-merge on and merges itself once the checks are green.
+# enforced for admins too), so nothing lands without CI passing. The flow is
+# synchronous end to end: sync local main, capture on top of it, open a PR,
+# wait for the required checks, merge, and return to main with the merged
+# result pulled. No auto-merge: arming it right after 'pr create' races
+# GitHub's mergeability computation (fails with "clean status" while the
+# required checks are still registering) and, under set -e, that used to
+# kill the script stranded on the topic branch.
 cmd_push() {
   require_repo
   ensure_gh
+
+  # Sync BEFORE capture so manifests regenerate on top of an up-to-date
+  # main — and so leftovers from an interrupted push (topic branch still
+  # checked out, regenerated manifests dirtying the tree) are carried home
+  # instead of wedging the branch switch.
+  local base=main
+  info "sync local $base with origin"
+  local stashed=0
+  if [[ "$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD)" != "$base" ]]; then
+    if ! git -C "$REPO_DIR" diff --quiet || ! git -C "$REPO_DIR" diff --cached --quiet; then
+      git -C "$REPO_DIR" stash push --quiet -m "envsync: carry uncommitted changes to $base"
+      stashed=1
+    fi
+    git -C "$REPO_DIR" checkout -q "$base"
+  fi
+  git -C "$REPO_DIR" pull --rebase --autostash origin "$base"
+  if [[ "$stashed" == 1 ]]; then
+    git -C "$REPO_DIR" stash pop --quiet \
+      || die "could not re-apply stashed changes onto $base — resolve in $REPO_DIR (git status), then re-run"
+  fi
+
   cmd_capture
   if ! run_secret_scan; then
     if [[ "${DEV_ENV_ALLOW_SECRETS:-0}" == 1 ]]; then
@@ -374,11 +401,6 @@ cmd_push() {
       die "push blocked by secret scan (fix the findings, or DEV_ENV_ALLOW_SECRETS=1 envsync push to override)"
     fi
   fi
-
-  local base=main
-  info "sync local $base with origin"
-  git -C "$REPO_DIR" checkout -q "$base"
-  git -C "$REPO_DIR" pull --rebase --autostash origin "$base"
 
   git -C "$REPO_DIR" add -A
   local ahead
@@ -399,32 +421,45 @@ cmd_push() {
   git -C "$REPO_DIR" push -u origin "$branch"
   ghr pr create --base "$base" --head "$branch" \
     --title "$msg" --body "Automated envsync push from $host."
-  ghr pr merge --auto --squash --delete-branch "$branch"
 
-  info "waiting for required checks (Ctrl-C is safe: PR auto-merges on green)"
+  # Until the merge lands, an interrupt must not strand the repo on the
+  # topic branch (that wedges the next push's checkout): park it back on
+  # $base first, leave the PR open, and bail.
+  trap 'trap - INT TERM; git -C "$REPO_DIR" checkout -q "$base"; warn "interrupted — PR left open: gh pr view $branch --web"; exit 130' INT TERM
+
+  info "waiting for required checks (Ctrl-C parks the repo on $base and leaves the PR open)"
   sleep 5   # give the workflow a moment to report its checks
   if ! ghr pr checks "$branch" --watch --fail-fast; then
+    trap - INT TERM
     git -C "$REPO_DIR" checkout -q "$base"
     warn "checks FAILED — PR left open for fixing: gh pr view $branch --web"
     return 1
   fi
 
-  # Checks are green; auto-merge fires asynchronously. Wait for it, then
-  # bring local main up to date and drop the local branch.
-  local i state
-  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-    state="$(ghr pr view "$branch" --json state -q .state 2>/dev/null || echo '')"
-    [[ "$state" == MERGED ]] && break
+  # Checks are green: merge synchronously. Right after checks flip green,
+  # GitHub can briefly report the PR unmergeable, so retry a few times.
+  info "merging PR"
+  local merged=0 merr=''
+  for _ in 1 2 3 4 5; do
+    if merr="$(ghr pr merge --squash --delete-branch "$branch" 2>&1)"; then
+      merged=1; break
+    fi
+    if [[ "$(ghr pr view "$branch" --json state -q .state 2>/dev/null)" == MERGED ]]; then
+      merged=1; break
+    fi
     sleep 3
   done
+  trap - INT TERM
+
   git -C "$REPO_DIR" checkout -q "$base"
-  if [[ "$state" == MERGED ]]; then
+  if [[ "$merged" == 1 ]]; then
     git -C "$REPO_DIR" pull --rebase origin "$base"
     git -C "$REPO_DIR" branch -D "$branch" >/dev/null 2>&1 || true
-    success "merged + local $base synced"
+    success "PR merged + local $base synced"
   else
-    warn "PR not merged yet (state: ${state:-unknown}) — it will auto-merge when ready;"
-    warn "  run 'envsync pull' afterwards to sync local $base"
+    [[ -n "$merr" ]] && warn "merge failed: $merr"
+    warn "PR NOT merged — merge it manually (gh pr view $branch --web), then run 'envsync pull'"
+    return 1
   fi
 }
 
@@ -465,7 +500,7 @@ cmd_help() {
   printf '  %s %s\n' "${G}install${R}          " "bootstrap or refresh this machine from the repo"
   printf '  %s %s\n' "${G}adopt${R}            " "first time: move this machine's dotfiles INTO the repo"
   printf '  %s %s\n' "${G}capture${R}          " "refresh machine-state manifests (Brewfile, extensions, ...)"
-  printf '  %s %s\n' "${G}push${R} [msg]       " "scan + capture + commit + auto-merge PR to GitHub"
+  printf '  %s %s\n' "${G}push${R} [msg]       " "capture + PR; waits for CI, merges, resyncs local main"
   printf '  %s %s\n' "${G}pull${R}             " "pull from GitHub + re-apply (install)"
   printf '  %s %s\n' "${G}status${R}           " "show drift between machine, repo, and GitHub"
   printf '  %s %s\n' "${G}scan${R}             " "scan the repo working tree for secrets/tokens"
