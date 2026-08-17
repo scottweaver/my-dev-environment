@@ -1,6 +1,6 @@
 ---
 name: daily-stand-up
-description: Generates a YTB (Yesterday / Today / Blockers) daily stand-up status update by reading project bindings from `.claude/rules/PROJECT.md`, autodiscovering tickets from the configured tracker (Linear or GitHub), walking through commentary, and copying the result to the clipboard. Triggers on phrases like "create my status update", "daily stand-up", "standup", "YTB", "what's my status", or "scrum update".
+description: Generates a YTB (Yesterday / Today / Blockers) daily stand-up status update by reading project bindings from `.claude/rules/PROJECT.md`, autodiscovering tickets from the configured tracker (Linear or GitHub), walking through commentary, copying the result to the clipboard, and (when `standup.email_to` is bound) offering to email it. Triggers on phrases like "create my status update", "daily stand-up", "standup", "YTB", "what's my status", or "scrum update".
 ---
 
 # Daily stand-up
@@ -20,6 +20,11 @@ Look for `.claude/rules/PROJECT.md` in the current project. Required YAML-frontm
 - **If GitHub**: `github.owner`, `github.repo`, `github.assignee`
 - `state_file.path` and `state_file.next_up_patterns`
 - `standup.no_blockers_sentinel`
+
+Optional fields:
+
+- `standup.email_to` — when present, step 6 offers email delivery to
+  this address. Absent → step 6 is skipped silently.
 
 **If PROJECT.md is missing**, defer to the `bootstrap-project` skill — read `~/.claude/skills/bootstrap-project/SKILL.md` and run its create-mode walkthrough. After PROJECT.md is written, resume this skill from step 1.
 
@@ -150,6 +155,39 @@ EOF
 
 After `pbcopy` succeeds, print the block in chat inside a fenced code block — **without** the leading blank line, so the user sees the clean YTB output. Confirm with a short line like *"Copied to clipboard (with a leading blank line so the first line survives pasting)."*
 
+### 6. Offer email delivery (only when `standup.email_to` is bound)
+
+Skip this step silently when PROJECT.md has no `standup.email_to`.
+When it's bound, ask: *"Email this YTB to `<standup.email_to>`?"* and
+wait for the reply. On a negative reply, stop — the clipboard copy is
+the deliverable.
+
+On yes, derive the **email variant** of the block (see Format rules —
+email variant) and hand it to the default mail client as a prefilled
+compose window via a `mailto:` URL — the user reviews and presses
+Send, keeping the actual send a human act:
+
+```bash
+python3 - <<'PYEOF'
+import subprocess, urllib.parse
+body = """<email-variant YTB block>"""
+url = "mailto:<standup.email_to>?" + urllib.parse.urlencode(
+    {"subject": "YTB stand-up - <YYYY-MM-DD>", "body": body},
+    quote_via=urllib.parse.quote)
+subprocess.run(["open", url], check=True)
+PYEOF
+```
+
+Then confirm: *"Compose window opened — review and hit Send."*
+
+**Why mailto, not direct send:** on current macOS, Mail.app's
+AppleScript surface no longer accepts `make new outgoing message`
+(error -2710), so scripted silent sending via Mail is off the table.
+If a Gmail/Outlook send tool is connected in the session (check
+ToolSearch for an email send tool before falling back), prefer it —
+send directly with the same subject/body and confirm with the message
+id — and note the mailto path remains the offline fallback.
+
 ## Format rules
 
 - **Linear identifier**: uppercase `<TEAM_PREFIX>-NNN`. Lowercase commonly breaks GitHub→Linear auto-flip integrations and is the wrong canonical form regardless.
@@ -161,6 +199,25 @@ After `pbcopy` succeeds, print the block in chat inside a fenced code block — 
 - **Theme line**: `- Theme: <text>` as the **last** bullet of its section (after any commentary), ≤ 15 words, at most one per section, omitted when it would only restate a lone ticket's summary.
 - **No-blockers sentinel**: emit `standup.no_blockers_sentinel` verbatim (no colons stripped, no substitution, no quote-wrapping).
 - **Clipboard and chat block match byte-for-byte except for the paste-guard** — no quoting, escaping, or surrounding prose to either copy. The *only* permitted difference is the single sacrificial leading blank line in the clipboard payload (see step 5); the chat block omits it.
+
+### Email variant (step 6 only)
+
+The email body is the same block with exactly three transformations —
+email clients don't render markdown or Slack emoji, and a raw
+markdown link reads as noise in plain text:
+
+- **Links flatten**: `- [IDENT](url) - summary` becomes
+  `- IDENT (url) - summary`.
+- **Slack-only sentinel flattens**: when `no_blockers_sentinel` is a
+  Slack emoji code (`:something:`), the email's B line is `B: none`
+  instead. A plain-text sentinel passes through verbatim.
+- **No paste-guard**: the email body starts directly at `Y:` — the
+  sacrificial blank line is a rich-editor workaround, not part of the
+  content.
+
+Subject: `YTB stand-up - <YYYY-MM-DD>` (stand-up date, ASCII hyphen).
+Everything else — ordering, commentary, themes, ASCII-dashes-only —
+carries over unchanged.
 
 ## Example — Linear-configured project
 

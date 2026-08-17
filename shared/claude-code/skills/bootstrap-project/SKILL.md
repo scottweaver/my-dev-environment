@@ -223,6 +223,8 @@ state_file:
 ```yaml
 standup:
   no_blockers_sentinel: <string>    # emitted verbatim, no normalisation
+  email_to: <address>               # optional; daily-stand-up step 6 offers
+                                    # email delivery when present
 ```
 
 ### Wrap-up block
@@ -288,6 +290,7 @@ state_file:
 # Stand-up-only settings.
 standup:
   no_blockers_sentinel: ":none:"
+  # email_to: <address>             # uncomment to have daily-stand-up offer email delivery
 
 # Wrap-up-only settings.
 wrapup:
