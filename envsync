@@ -31,6 +31,13 @@
 #   envsync usb status      show drive location and drift vs local main
 #   envsync status          show drift between machine, repo, and GitHub
 #   envsync scan            scan the repo working tree for secrets/tokens
+#                           and denylist patterns
+#   envsync client on <label>   declare this a CLIENT machine: all outbound
+#                           sync (push, usb push/init, capture, adopt) is
+#                           hard-blocked, with no override
+#   envsync client off      declare this a personal machine (leaving client
+#                           mode asks you to retype the engagement label)
+#   envsync client status   show this machine's declaration
 #   envsync agent-sync [..] mirror the CURRENT project's .claude/rules into
 #                           .cursor/rules (args pass through: --check,
 #                           --watch, --clean; see 'envsync agent-sync --help')
@@ -45,6 +52,10 @@
 #   DEV_ENV_USB        thumb-drive mount point or its bare-repo path
 #                      (default: auto-detect under /Volumes, /run/media)
 #
+# Machine-local state (never synced, by design):
+#   ~/.config/envsync/machine.conf   personal-vs-client declaration
+#   ~/.config/envsync/denylist       content patterns that always block push
+#
 # Idempotent; safe to re-run. Compatible with macOS's stock bash 3.2.
 
 set -euo pipefail
@@ -53,6 +64,13 @@ set -euo pipefail
 
 DEV_ENV_REPO_URL="${DEV_ENV_REPO_URL:-https://github.com/scottweaver/my-dev-environment.git}"
 DEV_ENV_HOME="${DEV_ENV_HOME:-$HOME/Projects/my-dev-environment}"
+
+# Machine-local guard state. Lives OUTSIDE the repo on purpose: it must
+# never sync between machines, and a copy of either file inside the repo is
+# itself flagged by the secret scan.
+ENVSYNC_CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/envsync"
+MACHINE_CONF="$ENVSYNC_CONF_DIR/machine.conf"
+DENYLIST_FILE="$ENVSYNC_CONF_DIR/denylist"
 
 # If this script lives inside a checkout of the repo, use that checkout.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -346,6 +364,114 @@ ensure_repo() {
   fi
 }
 
+# ---------------------------------------------------- machine declaration ---
+
+# Exfiltration guard. Every machine must be declared 'personal' or 'client'
+# before envsync will move anything OUT of it (push, usb push, usb init,
+# capture, adopt). The gate fails closed — an undeclared machine cannot
+# push at all — and on a client machine there is deliberately NO override:
+# no environment variable, no flag. Only an interactive 'envsync client
+# off', confirmed by retyping the engagement label, re-opens outbound sync.
+
+machine_mode() {   # -> personal | client | unset
+  local mode=''
+  [[ -f "$MACHINE_CONF" ]] && mode="$(sed -n 's/^mode=//p' "$MACHINE_CONF" | head -1)"
+  case "$mode" in
+    personal|client) printf '%s\n' "$mode" ;;
+    *)               printf 'unset\n' ;;
+  esac
+}
+
+machine_label() {
+  [[ -f "$MACHINE_CONF" ]] || return 0
+  sed -n 's/^label=//p' "$MACHINE_CONF" | head -1
+}
+
+require_outbound() {
+  local cmd="$1"
+  case "$(machine_mode)" in
+    personal) return 0 ;;
+    client)
+      die "'envsync $cmd' is blocked — this machine is in client mode ($(machine_label)).
+Outbound sync is disabled here so nothing from a client environment can reach
+the dotfiles repo, GitHub, or a thumb drive. Inbound commands (install, pull,
+status, scan) still work. There is no override; to re-enable outbound sync
+run 'envsync client off' (asks you to retype the engagement label)." ;;
+    *)
+      die "this machine is undeclared — outbound sync is locked until you declare it:
+  envsync client off                 personal machine: full sync
+  envsync client on '<engagement>'   client machine: inbound-only
+One-time; stored in $MACHINE_CONF (machine-local, never synced)." ;;
+  esac
+}
+
+# One informational line for inbound commands; never blocks.
+note_machine_mode() {
+  case "$(machine_mode)" in
+    client) log "note   client mode ($(machine_label)) — inbound sync only on this machine" ;;
+    unset)  log "note   machine undeclared — outbound sync locked until 'envsync client on|off'" ;;
+  esac
+}
+
+cmd_client() {
+  local sub="${1:-status}"
+  shift || true
+  case "$sub" in
+    on)
+      local label="$*"
+      [[ -n "$label" ]] || die "usage: envsync client on '<engagement label>'"
+      mkdir -p "$ENVSYNC_CONF_DIR"
+      {
+        printf 'mode=client\n'
+        printf 'label=%s\n' "$label"
+        printf 'since=%s\n' "$(date '+%Y-%m-%d')"
+      } > "$MACHINE_CONF"
+      success "client mode ON — outbound sync disabled on this machine"
+      log "note   blocked here: push, usb push, usb init, capture, adopt (no override)"
+      log "note   still available: install, pull, status, scan"
+      if [[ ! -s "$DENYLIST_FILE" ]]; then
+        log "note   next: seed $DENYLIST_FILE with client-identifying patterns"
+        log "note   (one regex per line — and add the same patterns on your PERSONAL machines,"
+        log "note    where the denylist scan blocks any push containing them, no override)"
+      fi
+      ;;
+    off)
+      if [[ "$(machine_mode)" == client ]]; then
+        [[ -t 0 ]] || die "refusing to leave client mode non-interactively"
+        local expect confirm
+        expect="$(machine_label)"
+        warn "this machine is in client mode: $expect"
+        printf 'Retype the engagement label to confirm leaving client mode: '
+        IFS= read -r confirm
+        [[ "$confirm" == "$expect" ]] || die "label mismatch — still in client mode"
+      fi
+      mkdir -p "$ENVSYNC_CONF_DIR"
+      {
+        printf 'mode=personal\n'
+        printf 'since=%s\n' "$(date '+%Y-%m-%d')"
+      } > "$MACHINE_CONF"
+      success "machine declared personal — outbound sync enabled"
+      ;;
+    status)
+      case "$(machine_mode)" in
+        client)   info "client mode ON ($(machine_label)) — outbound sync disabled"
+                  log "note   blocked: push, usb push, usb init, capture, adopt" ;;
+        personal) log "ok     personal machine — outbound sync enabled" ;;
+        *)        warn "undeclared — outbound sync locked (declare with 'envsync client on|off')" ;;
+      esac
+      if [[ -s "$DENYLIST_FILE" ]]; then
+        local n
+        n="$(grep -c -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$DENYLIST_FILE" || true)"
+        log "ok     denylist: $n pattern(s) ($DENYLIST_FILE)"
+      else
+        log "note   denylist: none ($DENYLIST_FILE)"
+      fi
+      ;;
+    *)
+      die "unknown client command: $sub (on <label> | off | status)" ;;
+  esac
+}
+
 # ------------------------------------------------------------ secret scan ---
 
 # Scan the repo working tree for things that look like credentials.
@@ -375,7 +501,8 @@ run_secret_scan() {
     cd "$REPO_DIR" || exit 1
     find . \( -path ./.git -o -path ./secrets \) -prune -o \
       \( -name '.tokens' -o -name 'tokens' -o -name '.secrets' \
-         -o -name 'id_rsa*' -o -name 'id_ed25519*' -o -name '*.pem' \) \
+         -o -name 'id_rsa*' -o -name 'id_ed25519*' -o -name '*.pem' \
+         -o -name 'denylist' -o -name 'machine.conf' \) \
       -type f -print 2>/dev/null || true
   )"
   if [[ -n "$hits$stray" ]]; then
@@ -386,6 +513,36 @@ run_secret_scan() {
     return 1
   fi
   log "ok     no secrets detected"
+}
+
+# Client-content guard: patterns in $DENYLIST_FILE (one case-insensitive
+# ERE per line, '#' comments) must never appear anywhere in the repo —
+# client names, internal hostnames/domains, project codenames. Unlike the
+# credential scan this has NO override: a hit always blocks, and
+# DEV_ENV_ALLOW_SECRETS is deliberately not consulted. Only file:line is
+# reported — the matched text is exactly what must not end up in logs.
+run_denylist_scan() {
+  local pats hits
+  pats="$(grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$DENYLIST_FILE" 2>/dev/null || true)"
+  if [[ -z "$pats" ]]; then
+    log "note   denylist scan: no patterns ($DENYLIST_FILE)"
+    return 0
+  fi
+  info "denylist scan ($REPO_DIR)"
+  hits="$(
+    cd "$REPO_DIR" || exit 1
+    printf '%s\n' "$pats" \
+      | grep -rIinE -f /dev/stdin --exclude-dir=.git -- . 2>/dev/null \
+      | cut -d: -f1,2 | LC_ALL=C sort -u || true
+  )"
+  if [[ -n "$hits" ]]; then
+    # shellcheck disable=SC2001  # per-line prefix; ${var//} can't anchor lines
+    sed 's/^/  denylist hit: /' <<<"$hits" >&2
+    warn "denylist patterns matched at the locations above (matched text withheld)."
+    warn "this always blocks — remove the content from the repo; there is no override."
+    return 1
+  fi
+  log "ok     no denylist matches"
 }
 
 # -------------------------------------------------------------- usb drive ---
@@ -474,6 +631,7 @@ usb_status_report() {
 
 cmd_install() {
   ensure_repo
+  note_machine_mode
   load_partitions
   run_partitions install
   success "install done ($OS: $PARTITIONS)"
@@ -481,6 +639,7 @@ cmd_install() {
 }
 
 cmd_adopt() {
+  require_outbound adopt
   require_repo
   load_partitions
   run_partitions adopt
@@ -490,6 +649,7 @@ cmd_adopt() {
 }
 
 cmd_capture() {
+  require_outbound capture
   require_repo
   load_partitions
   run_partitions capture
@@ -506,6 +666,7 @@ cmd_capture() {
 # required checks are still registering) and, under set -e, that used to
 # kill the script stranded on the topic branch.
 cmd_push() {
+  require_outbound push
   require_repo
   if ! origin_reachable; then
     if usb_repo_path >/dev/null; then
@@ -527,6 +688,8 @@ cmd_push() {
   git -C "$REPO_DIR" pull --rebase --autostash origin "$base"
 
   cmd_capture
+  run_denylist_scan \
+    || die "push blocked by denylist scan (remove the flagged content — there is no override)"
   if ! run_secret_scan; then
     if [[ "${DEV_ENV_ALLOW_SECRETS:-0}" == 1 ]]; then
       warn "DEV_ENV_ALLOW_SECRETS=1 set — pushing anyway"
@@ -600,6 +763,7 @@ cmd_push() {
 
 cmd_pull() {
   require_repo
+  note_machine_mode
   if ! origin_reachable; then
     if usb_repo_path >/dev/null; then
       warn "GitHub unreachable — pulling from the thumb drive"
@@ -616,6 +780,7 @@ cmd_pull() {
 # ---------------------------------------------------------- usb commands ---
 
 cmd_usb_init() {
+  require_outbound "usb init"
   require_repo
   local drive="${1:-}"
   [[ -n "$drive" ]] || die "usage: envsync usb init /Volumes/<drive>  (the drive's mount point)"
@@ -637,6 +802,7 @@ cmd_usb_init() {
 # ride the next online 'envsync push' as part of its PR. The secret scan
 # still runs and still blocks.
 cmd_usb_push() {
+  require_outbound "usb push"
   require_repo
   local usb
   usb="$(usb_repo_path)" \
@@ -661,6 +827,8 @@ cmd_usb_push() {
     fi
   fi
   cmd_capture
+  run_denylist_scan \
+    || die "usb push blocked by denylist scan (remove the flagged content — there is no override)"
   if ! run_secret_scan; then
     if [[ "${DEV_ENV_ALLOW_SECRETS:-0}" == 1 ]]; then
       warn "DEV_ENV_ALLOW_SECRETS=1 set — pushing anyway"
@@ -720,6 +888,11 @@ cmd_usb() {
 cmd_status() {
   require_repo
   info "repo: $REPO_DIR (partitions: $PARTITIONS)"
+  case "$(machine_mode)" in
+    client)   info "machine: CLIENT mode ($(machine_label)) — outbound sync disabled" ;;
+    personal) log "ok     machine: personal (outbound sync enabled)" ;;
+    *)        warn "machine: undeclared — outbound sync locked ('envsync client on|off')" ;;
+  esac
   git -C "$REPO_DIR" fetch --quiet 2>/dev/null || warn "could not reach remote (offline?)"
   git -C "$REPO_DIR" status -sb
   usb_status_report
@@ -752,7 +925,8 @@ cmd_help() {
   printf '  %s %s\n' "${G}pull${R}             " "pull from GitHub + re-apply (install)"
   printf '  %s %s\n' "${G}usb${R} <cmd>        " "thumb-drive fallback: init <drive> | push | pull | status"
   printf '  %s %s\n' "${G}status${R}           " "show drift between machine, repo, and GitHub"
-  printf '  %s %s\n' "${G}scan${R}             " "scan the repo working tree for secrets/tokens"
+  printf '  %s %s\n' "${G}scan${R}             " "scan the repo working tree for secrets + denylist patterns"
+  printf '  %s %s\n' "${G}client${R} <cmd>     " "machine declaration: on <label> | off | status"
   printf '  %s %s\n' "${G}agent-sync${R} [..]  " "mirror the CURRENT project's .claude/rules into .cursor/rules"
   printf '\n'
   printf '  %s %s\n' "${B}Partitions:${R}" "$PARTITIONS ${D}(detected: $OS)${R}"
@@ -760,6 +934,7 @@ cmd_help() {
   printf '  %s %s\n' "${B}Config:${R}    " "${D}DEV_ENV_REPO_URL, DEV_ENV_HOME, DEV_ENV_USB, DEV_ENV_COLOR=always|never|auto${R}"
   printf '\n'
   printf '  %s\n' "${D}push, pull, and install fall back to the thumb drive when GitHub is unreachable.${R}"
+  printf '  %s\n' "${D}outbound sync requires a machine declaration; 'envsync client on' locks a client machine to inbound-only.${R}"
   printf '\n'
   printf '  %s\n' "${D}Idempotent; safe to re-run. Docs: README.md${R}"
 }
@@ -777,7 +952,12 @@ main() {
     pull|update)    cmd_pull "$@" ;;
     usb)            cmd_usb "$@" ;;
     status)         cmd_status "$@" ;;
-    scan)           require_repo; run_secret_scan ;;
+    client)         cmd_client "$@" ;;
+    scan)           require_repo
+                    rc=0
+                    run_secret_scan || rc=1
+                    run_denylist_scan || rc=1
+                    exit "$rc" ;;
     agent-sync|agentsync|rules) cmd_agent_sync "$@" ;;
     help|-h|--help) cmd_help ;;
     *)              die "unknown command: $cmd (try 'envsync help')" ;;
