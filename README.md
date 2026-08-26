@@ -53,8 +53,11 @@ envsync push       # capture manifests + commit + push
 | `envsync usb push [msg]` | Offline push: `capture` + commit **directly on local `main`** + sync the drive. No PR/CI — the commits ride the next online `envsync push` as its PR, so branch protection still gates GitHub. The secret scan still runs and still blocks. |
 | `envsync usb pull` | Fast-forward local `main` from the drive, then re-apply (`install`). |
 | `envsync usb status` | Show where the drive is mounted and how far local `main` is ahead/behind it. |
-| `envsync status` | Show drift: repo vs remote, package manifests vs installed, extensions, broken links. |
-| `envsync scan` | Scan the repo working tree for tokens/keys/credentials. Runs automatically before every `push` and blocks the push on findings (override: `DEV_ENV_ALLOW_SECRETS=1`). |
+| `envsync status` | Show drift: repo vs remote, package manifests vs installed, extensions, broken links. Also shows this machine's personal/client declaration. |
+| `envsync scan` | Scan the repo working tree for tokens/keys/credentials (override on push: `DEV_ENV_ALLOW_SECRETS=1`) **and** for denylist patterns (no override — see [Client engagements](#client-engagements)). Runs automatically before every `push` and blocks it on findings. |
+| `envsync client on '<label>'` | Declare this a **client machine**: all outbound sync (`push`, `usb push`, `usb init`, `capture`, `adopt`) is hard-blocked, with no override. Inbound (`install`, `pull`, `status`, `scan`) still works. |
+| `envsync client off` | Declare this a personal machine (full sync). Leaving client mode requires retyping the engagement label at an interactive prompt. |
+| `envsync client status` | Show this machine's declaration and denylist state. |
 | `envsync agent-sync [args]` | Run [agent-sync](shared/bin/agent-sync) in the **current project**: mirror its `.claude/rules/*.md` into `.cursor/rules/*.mdc` so Cursor loads the same rules as Claude Code. Pass-through args: `--check`, `--watch`, `--clean`, `--help`. Aliases: `agentsync`, `rules`. |
 
 ## How syncing works
@@ -104,6 +107,50 @@ nothing goes stale when the volume name or OS changes.
   plugged-in drive. If a squash-merge rewrote history the drive still holds,
   the refresh parks the drive's old tip under `refs/backup/` in the drive
   repo before overwriting — nothing is ever silently discarded.
+
+## Client engagements
+
+When a machine belongs to a client engagement (contract work, an employer's
+laptop), the sync loop itself becomes an exfiltration channel: symlinked
+dotfiles mean any edit made on that machine lands in the repo working tree,
+`capture` snapshots machine state (Brewfile taps, npm registries, extensions),
+and `push` carries all of it to personal GitHub or a thumb drive. Three
+layered guards close that channel:
+
+1. **Machine declaration (fail-closed).** Outbound commands (`push`,
+   `usb push`, `usb init`, `capture`, `adopt`) refuse to run until the
+   machine is declared with `envsync client on '<engagement>'` (client:
+   outbound permanently blocked, no override) or `envsync client off`
+   (personal: full sync). A brand-new, undeclared machine therefore cannot
+   push *by default* — the guard does not depend on remembering to enable
+   it. The declaration lives in `~/.config/envsync/machine.conf`,
+   machine-local and never synced. Leaving client mode is interactive-only
+   and requires retyping the engagement label.
+2. **Denylist scan (no override).** `~/.config/envsync/denylist` holds one
+   case-insensitive regex per line (`#` comments) — client names, internal
+   hostnames/domains, project codenames. Every `push`/`usb push` on **every**
+   machine greps the entire working tree against it and blocks on any hit.
+   Unlike the credential scan, `DEV_ENV_ALLOW_SECRETS=1` does not bypass it,
+   and findings print file:line only — the matched text is exactly what must
+   not end up in terminal scrollback or CI logs. Seed the same patterns on
+   your personal machines too: that is what catches client residue that
+   hitches a ride through a shared browser profile, a pasted snippet, or a
+   Claude/VS Code setting.
+3. **Server-side backstop.** The `secret-scan` CI workflow (required by
+   branch protection) loads the same pattern lines from the optional
+   `ENVSYNC_DENYLIST` repository **secret** — patterns never appear in the
+   repo itself — so even a push from a machine with no local denylist is
+   caught before merge. Set it under *Settings → Secrets and variables →
+   Actions*, one pattern per line.
+
+Setup for an engagement, in order: on each personal machine run
+`envsync client off` once (existing machines are undeclared and locked until
+this) and add the engagement's patterns to `~/.config/envsync/denylist`; set
+the `ENVSYNC_DENYLIST` repo secret; on the client machine — if personal
+dotfiles are permitted there at all — run `envsync install`, then
+`envsync client on '<engagement>'` immediately. Nothing in the repo, the
+denylist mechanism, or CI config should ever name the client; the names live
+only in machine-local files and the repo secret.
 
 ## Repo layout
 
