@@ -15,9 +15,10 @@ Follow these steps in order. Wait for each reply before moving on — don't batc
 
 Look for `.claude/rules/PROJECT.md` in the current project. Required YAML-frontmatter fields:
 
-- `tracker`: `linear` or `github`
+- `tracker`: `linear`, `github`, or `none`
 - **If Linear**: `linear.workspace`, `linear.team_prefix`, `linear.assignee_id`
 - **If GitHub**: `github.owner`, `github.repo`, `github.assignee`
+- **If none**: no tracker bindings — steps 2 and 3 use their no-tracker branches
 - `state_file.path` and `state_file.next_up_patterns`
 - `standup.no_blockers_sentinel`
 
@@ -104,16 +105,21 @@ gh issue list \
 
 Every returned issue counts as Y — `gh issue list` already filters to closed-in-window-and-assigned. Construct URLs from owner/repo/number directly: `https://github.com/<owner>/<repo>/issues/<number>`.
 
+#### No-tracker branch (`tracker: none`)
+
+Nothing to query. Draft Y candidates from what's observable locally: `git log --since="<window start>" --oneline` when the project is a git repo, plus the recent-progress section of the state file (when `state_file.path` is bound). Present the draft and let the user edit, add, or remove — with no tracker, the user is the source of truth for Y. Items are plain bullets (no identifier, no link); each still gets a goal summary per step 3.5.
+
 ### 3. Discover T tickets
 
 Read the file at `state_file.path`. Search for each pattern in `state_file.next_up_patterns`, substituting `{ID}` with the tracker-appropriate identifier shape:
 
 - Linear: `<team_prefix>-\d+` (e.g., `OSS-385`)
 - GitHub: `#\d+` (e.g., `#42`)
+- None: free text to the end of the line — the task name itself
 
 Pull the next-up ticket(s) from the first matching pattern. Usually one ticket; occasionally more.
 
-Fetch each T ticket's title and description from the tracker (Linear: query by identifier; GitHub: `gh issue view <number> --json title,body`) — the goal summaries in the next step need them.
+Fetch each T ticket's title and description from the tracker (Linear: query by identifier; GitHub: `gh issue view <number> --json title,body`) — the goal summaries in the next step need them. With `tracker: none` there is nothing to fetch — the matched state-file line plus its surrounding context stands in for the description.
 
 If a ticket appears in both Y (state moved inside the window) AND is still the current focus (in-progress), put it under T — Y is for past activity, T is for what's actively being worked.
 
@@ -192,6 +198,7 @@ id — and note the mailto path remains the offline fallback.
 
 - **Linear identifier**: uppercase `<TEAM_PREFIX>-NNN`. Lowercase commonly breaks GitHub→Linear auto-flip integrations and is the wrong canonical form regardless.
 - **GitHub identifier**: `#NNN` (same-repo).
+- **No-tracker items** (`tracker: none`): plain bullets — no bracketed identifier, no URL. `- <goal summary>`, optionally prefixed by a short task name and a spaced ASCII hyphen. Every other rule (goal summaries, themes, ASCII dashes, sentinel) applies unchanged.
 - **URL**: canonical short form. Linear: `https://linear.app/<workspace>/issue/<identifier>` (no trailing slug — strip any slug the API returns). GitHub: `https://github.com/<owner>/<repo>/issues/<number>`.
 - **Bracketed link label**: identifier only — no title, no status suffix. The goal summary lives *outside* the brackets, joined by a spaced ASCII hyphen: `- [OSS-385](url) - split storage so clients sync only subscribed channels`.
 - **Goal summary**: ≤ 12 words, outcome-focused, plain language, no trailing period. Every ticket line in Y and T carries one.

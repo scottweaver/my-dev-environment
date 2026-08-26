@@ -19,7 +19,7 @@ Project-specific bindings (state file path, branch/commit conventions, auto-merg
 
 - **With explicit PR#** (`/wrap-up 87`): use that PR.
 - **Without argument**: run `gh pr list --state merged --limit 3 --json number,title,mergedAt,headRefName` and pick the most recently merged. If the most recent is older than ~1 hour or ambiguous (multiple recent merges), confirm with the user before proceeding.
-- **Tracker ticket ID**: derive from the PR title/body or commit message. If ambiguous, ask.
+- **Tracker ticket ID**: derive from the PR title/body or commit message. If ambiguous, ask. With `tracker: none` there is no ticket — use the PR number for slugs and skip step 3.
 
 ## The 8 steps
 
@@ -29,8 +29,8 @@ Run sequentially. Each step is short; the whole routine takes a couple of minute
 
 Look for `.claude/rules/PROJECT.md`. Required YAML-frontmatter fields:
 
-- `tracker`: `linear` or `github`
-- Tracker-specific bindings (Linear: workspace, team_prefix, assignee_id, state_uuids; GitHub: owner, repo, assignee)
+- `tracker`: `linear`, `github`, or `none`
+- Tracker-specific bindings (Linear: workspace, team_prefix, assignee_id, state_uuids; GitHub: owner, repo, assignee; none: no bindings — step 3 is skipped)
 - `state_file.path` (may be `null` to disable steps 4 + 6 + 7)
 - `wrapup.docs_pr_branch_prefix`, `wrapup.docs_pr_commit_prefix`, `wrapup.auto_merge_carve_out_path`
 - `wrapup.state_refresh_authority` (optional — the rule file that owns the post-merge policy)
@@ -63,7 +63,7 @@ git push origin --delete <branch-name>
 
 ### 3. Verify the tracker ticket is done/closed
 
-Branch on `tracker`.
+Branch on `tracker`. **If `tracker: none`**: skip this step — there is no ticket to verify. Record "no tracker configured — skipped" in the outcomes table's step-3 row and continue to step 4.
 
 #### Linear branch
 
@@ -249,6 +249,7 @@ Nothing — it's an encoded version of the project's post-merge policy (typicall
 - **PR closed without merge** — different routine; not this skill.
 - **Several PRs merged at once** — wrap up each individually; state-file refresh can batch the progress-log entries if they're tightly related (same track, same day).
 - **Tracker ticket not found** — investigate before flipping anything; may be that the PR had no ticket ref by design (e.g. tiny tech-debt chores), in which case skip step 3.
+- **No tracker configured** (`tracker: none`) — skip step 3; note "no tracker configured — skipped" in the outcomes table. The PR/branch steps still apply when the repo is hosted on GitHub.
 - **State file already up-to-date** (race: someone else refreshed it) — skip steps 4-7; verify and move on.
 - **No state file configured** (`state_file.path: null`) — skip steps 4-7 entirely; emit a compact outcomes table covering steps 1-3 + 8.
 - **No audit doc configured** (`wrapup.audit_doc: null`) — skip step 5; note "not configured" in the outcomes table.

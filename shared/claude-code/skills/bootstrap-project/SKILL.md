@@ -43,7 +43,10 @@ Ask: *"Which issue tracker does this project use?"*
 
 - **Linear** → step 3.
 - **GitHub Issues** → step 4.
-- **Other** (Jira, Shortcut, none) — current schema doesn't cover; tell the user the schema needs extending and stop. Offer to extend the schema together if appropriate.
+- **None** — no issue tracker. Bind `tracker: none`, skip steps 3 + 4, and comment out **both** tracker blocks in the template. Downstream behaviour:
+  - `daily-stand-up` skips tracker queries; Y is drafted from git activity + the state file, T from the state file's next-up line as free text. Items render as plain bullets — no identifiers, no links.
+  - `wrap-up` skips step 3 (tracker verification) and notes "no tracker configured" in the outcomes table; the PR-based steps still run when the repo is hosted on GitHub.
+- **Other** (Jira, Shortcut) — current schema doesn't cover; tell the user the schema needs extending and stop. Offer to extend the schema together if appropriate.
 
 ### 3. Linear bindings
 
@@ -106,7 +109,7 @@ Ask: *"Does this project have a live state-tracking file (e.g. `STATE.md`)?"*
   - `**next up: {ID}**`
   - `Next up in Phase N: {ID}`
 
-  The `{ID}` placeholder is substituted with the tracker-appropriate identifier shape at run time (`<team_prefix>-\d+` for Linear, `#\d+` for GitHub).
+  The `{ID}` placeholder is substituted with the tracker-appropriate identifier shape at run time (`<team_prefix>-\d+` for Linear, `#\d+` for GitHub; for `tracker: none`, `{ID}` matches free text to the end of the line — the task name itself).
 
 - **No** — bind `state_file.path: null`. Downstream behaviour:
   - `daily-stand-up` falls back to prompting the user inline for the T ticket.
@@ -141,7 +144,7 @@ Ask: *"Will you use the `wrap-up` skill in this project too?"*
 
 ### 8. Write PROJECT.md
 
-Render the template at the bottom of this file, substituting the values gathered. Comment out the unused tracker block (Linear-configured → comment out `github:` and vice versa) so the file stays self-documenting.
+Render the template at the bottom of this file, substituting the values gathered. Comment out the unused tracker block (Linear-configured → comment out `github:` and vice versa; `tracker: none` → comment out both) so the file stays self-documenting.
 
 ```bash
 cat > .claude/rules/PROJECT.md <<'EOF'
@@ -178,7 +181,7 @@ PROJECT.md uses a YAML frontmatter followed by markdown prose. The frontmatter i
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `tracker` | `linear` \| `github` | yes | Skills branch on this. |
+| `tracker` | `linear` \| `github` \| `none` | yes | Skills branch on this. `none` = no issue tracker: ticket discovery and tracker verification are disabled; both tracker blocks omitted. |
 | `linear` | object | when `tracker: linear` | See Linear block below. |
 | `github` | object | when `tracker: github` | See GitHub block below. |
 | `state_file` | object | yes (`path` may be `null`) | See State-file block. |
@@ -252,7 +255,7 @@ agent_sync:
 
 ## PROJECT.md template
 
-Substitute values during step 8. Comment-out the unused tracker block.
+Substitute values during step 8. Comment-out the unused tracker block(s) — both when `tracker: none`.
 
 ```markdown
 ---
@@ -260,9 +263,10 @@ Substitute values during step 8. Comment-out the unused tracker block.
 # Hand-edited rule file; the portable skills are project-agnostic, all the per-project values live here.
 # Schema source of truth: ~/.claude/skills/bootstrap-project/SKILL.md
 
-tracker: <linear|github>
+tracker: <linear|github|none>
 
-# Linear bindings (required when tracker: linear; ignored otherwise).
+# Linear bindings (required when tracker: linear; ignored otherwise;
+# comment out this block AND the github block when tracker: none).
 linear:
   workspace: <slug>
   team_prefix: <PREFIX>
