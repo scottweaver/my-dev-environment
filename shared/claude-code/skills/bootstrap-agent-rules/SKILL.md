@@ -1,6 +1,6 @@
 ---
 name: bootstrap-agent-rules
-description: Bootstraps a project's agent-rules layer — .claude/rules/ with idiomatic coding rules (Rust and/or TypeScript, auto-detected), METHODOLOGIES.md workflow, a STATE.md session-memory file, a bespoke ARCHITECTURE.md, a CLAUDE.md authority map with AGENTS.md symlink, and (optionally, always ask first) Linear ticket integration. Invoke explicitly with /bootstrap-agent-rules or on phrases like "bootstrap the agent rules", "set up Claude rules for this project", "install the rules layer", "set up STATE.md and ARCHITECTURE.md", "give this project the standard rules".
+description: Bootstraps a project's agent-rules layer — .claude/rules/ with idiomatic coding rules (Rust, TypeScript, and/or Scala, auto-detected), METHODOLOGIES.md workflow, a STATE.md session-memory file, a bespoke ARCHITECTURE.md, a CLAUDE.md authority map with AGENTS.md symlink, and (optionally, always ask first) Linear ticket integration. Invoke explicitly with /bootstrap-agent-rules or on phrases like "bootstrap the agent rules", "set up Claude rules for this project", "install the rules layer", "set up STATE.md and ARCHITECTURE.md", "give this project the standard rules".
 ---
 
 # bootstrap-agent-rules
@@ -18,6 +18,7 @@ AGENTS.md -> CLAUDE.md           symlink (read natively by Cursor & others)
 .claude/rules/
   RUST_BEST_PRACTICES.md         if Rust detected
   TS_BEST_PRACTICES.md           if TypeScript detected
+  SCALA_BEST_PRACTICES.md        if Scala detected
   METHODOLOGIES.md               workflow: branching, PRs, refactors, post-merge
   STATE.md                       session memory — filled from repo analysis
   ARCHITECTURE.md                bespoke — filled via design dialog
@@ -49,7 +50,11 @@ Look at the repo root **and first-level workspace/package directories**
 - `Cargo.toml` → install `RUST_BEST_PRACTICES.md`.
 - `package.json` or `tsconfig.json` → install
   `TS_BEST_PRACTICES.md`.
-- Both → both. Neither → ask the user which (or neither).
+- `build.sbt`, `project/build.properties`, `build.sc` / `build.mill`
+  (Mill), or `project.scala` (scala-cli) → install
+  `SCALA_BEST_PRACTICES.md`.
+- Any combination → all that match. None → ask the user which (or
+  none).
 
 ### 3. Install the fixed rule files
 
