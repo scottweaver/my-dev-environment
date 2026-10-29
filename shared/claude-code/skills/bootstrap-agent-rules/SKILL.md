@@ -49,7 +49,8 @@ Look at the repo root **and first-level workspace/package directories**
 
 - `Cargo.toml` → install `RUST_BEST_PRACTICES.md`.
 - `package.json` or `tsconfig.json` → install
-  `TS_BEST_PRACTICES.md`.
+  `TS_BEST_PRACTICES.md`. A `package.json` that only backs a docs
+  site (Docusaurus, mdBook helpers) does not count — ask.
 - `build.sbt`, `project/build.properties`, `build.sc` / `build.mill`
   (Mill), or `project.scala` (scala-cli) → install
   `SCALA_BEST_PRACTICES.md`.

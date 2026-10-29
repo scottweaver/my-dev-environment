@@ -15,6 +15,12 @@ default, effects at the edges. Scala permits both; this codebase
 demands both. Scala also permits Java-with-nicer-syntax; that dialect
 is not written here.
 
+ZIO 2.x is the effect system and application framework. Effects are
+`ZIO` values, dependencies are services wired with `ZLayer`,
+resources ride a `Scope`, and nothing runs until the entry point. See
+"ZIO is the framework" below; a project that genuinely cannot use ZIO
+records that as a dated ARCHITECTURE.md constraint.
+
 Examples use Scala 3 syntax. In a Scala 2 project the rules are
 identical with the mechanical substitutions: `sealed trait` + `final
 case class` for `enum`, a value class or newtype for `opaque type`,
@@ -231,12 +237,13 @@ disk are passed in as values or injected at the edges. This is what
 makes the core trivially testable (property tests, replay) and its
 behavior deterministic.
 
-IO lives in a thin shell that calls into the pure core. If the project
-uses an effect system (cats-effect, ZIO), effects are values and the
-shell is where they are built and run — the core's signatures mention
-no effect type. If it doesn't, the shell is plain side-effecting code
-at the top of the call stack. Either way, `Future`/`IO`/`ZIO` never
-leaks into core signatures.
+IO lives in a thin ZIO shell that calls into the pure core. Effects
+are `ZIO` values; the shell is where they are built, composed into
+layers, and run — the core's signatures mention no effect type.
+`Future`/`IO`/`ZIO` never leaks into core signatures. A pure function
+is tested with plain `assertTrue`; an effectful one with
+`ZIOSpecDefault` and test services (`TestClock`, `TestRandom`), never
+with sleeps.
 
 ### Immutability is the default. `var` is opt-in, local, and invisible from outside.
 
@@ -298,11 +305,97 @@ banned outright, and an implicit parameter used to quietly thread "the
 context" everywhere is the shared-mutable-context smell in new
 clothing — dependencies worth having are worth naming in signatures.
 
+## ZIO is the framework
+
+### Every effect is a `ZIO` value; nothing runs until the edge.
+
+Side effects (network, database, file IO, clocks, randomness, any
+Java library that does work when called) are described with
+`ZIO.attempt`, `ZIO.attemptBlocking`, `ZIO.acquireRelease`, and
+friends, never executed inline. The only places that run an effect
+are the `ZIOAppDefault` entry point, a `ZIOSpecDefault`, and build
+tooling. `Unsafe.unsafe { ... }` / `Runtime.default.unsafe.run` appear
+nowhere under `src/main`.
+
+### Services are traits; implementations are `final case class`es; wiring is a `ZLayer`.
+
+```scala
+trait UserRepo:
+  def find(id: UserId): IO[RepoError, Option[User]]
+
+object UserRepo:
+  val layer: URLayer[Transactor, UserRepo] = ZLayer.fromFunction(UserRepoLive.apply)
+  def find(id: UserId): ZIO[UserRepo, RepoError, Option[User]] =
+    ZIO.serviceWithZIO[UserRepo](_.find(id))
+
+final case class UserRepoLive(xa: Transactor) extends UserRepo:
+  def find(id: UserId): IO[RepoError, Option[User]] = ...
+```
+
+- The trait is the contract. It has no implementation and no
+  companion state.
+- The live implementation is a `final case class` whose constructor
+  parameters are its dependencies, so `ZLayer.fromFunction` /
+  `ZLayer.derive` can build it and tests can instantiate it directly.
+- The companion exposes a `layer` and accessor methods
+  (`ZIO.serviceWithZIO`) so callers never reach into the environment
+  by hand.
+- Configuration is its own `final case class Settings` with a
+  `Settings.default` (or `Settings.fromConfig`) layer. Layers read
+  settings from the environment; they do not take them as constructor
+  arguments.
+
+### Resources are `Scope`d; nothing leaks.
+
+Anything with a lifecycle (a connection pool, a client, a server
+binding, a container, a file handle) is acquired with
+`ZIO.acquireRelease` and exposed through `ZLayer.scoped`. The release
+action is total: it uses `.ignoreLogged` (or `.orDie` when failure to
+release is a defect), never a bare `ZIO.attempt` whose failure would
+be silently discarded by the finalizer machinery. Test suites share
+expensive resources per suite with `provideShared`, never one per
+test case.
+
+### Environment, error, and success channels are all designed.
+
+`ZIO[R, E, A]` has three slots; each is chosen deliberately.
+
+- `R` names only the services this effect actually uses. `R = Any`
+  for pure computations and for effects whose dependencies were
+  captured at construction.
+- `E` is a purpose-built error type (see "Error handling"). `E =
+  Throwable` is permitted only at the boundary with a Java library
+  that throws, and is narrowed with `.refineOrDie` / `.mapError`
+  before the effect leaves the module. `E = Nothing` is a claim that
+  the effect cannot fail; make it only when `.orDie` was a conscious
+  "this is a defect" decision, not a convenience.
+- One type alias per error domain (`type RepoIO[A] = IO[RepoError,
+  A]`) rather than re-spelling the full `ZIO[R, E, A]` at every call
+  site.
+
+### ZIO combinators over hand-rolled control flow.
+
+Retries are `Schedule`s, not loops. Timeouts are `.timeout` /
+`.timeoutFail`, not `Thread.sleep` polling. Concurrency is
+`ZIO.foreachPar`, `.zipPar`, `.race`, `Fiber`, `Queue`, `Ref`, `Hub`,
+never `java.util.concurrent` primitives, `synchronized`, or
+`@volatile`. Shared mutable state across fibers is a `Ref` /
+`Ref.Synchronized` / `FiberRef`, never a `var`.
+
+### Streaming data is a `ZStream`.
+
+Anything that is naturally a sequence over time (event streams,
+chunked HTTP bodies, message-broker records, log tails, large query
+results) is a `ZStream`, consumed with stream combinators. Collecting
+a whole stream into memory is a deliberate choice made at the
+consumer, never inside the producer.
+
 ## Error handling
 
 ### Errors are values returned, not exceptions thrown.
 
-Anything that can fail recoverably returns `Either[E, A]` with a
+Anything that can fail recoverably returns `Either[E, A]` in the pure
+core and `ZIO[R, E, A]` with the same `E` in the shell, where `E` is a
 purpose-built sealed error ADT. Error ADTs are part of the API design
 and get the same type-first treatment: a caller should be able to
 `match` on the failure and do something different per case, or the
@@ -328,6 +421,16 @@ a runtime condition the caller should handle. In practice:
 Never use `Either` where the failure is impossible by construction —
 that's what the type discipline above is for — and never use a throw
 where the failure is real. Both directions of the mistake cost.
+
+### Defects are `.orDie`; failures are typed.
+
+In the ZIO shell, exceptions from Java libraries are caught at the
+call site with `ZIO.attempt` / `ZIO.attemptBlocking` and immediately
+classified: `refineToOrDie[SpecificException]` + `mapError` into the
+module ADT for recoverable failures, `.orDie` for situations that can
+only be bugs or environmental impossibilities. A caller that could
+sensibly retry or degrade sees a typed failure in `E`; everything
+else is a defect and never appears in a signature.
 
 ### Absence is `Option`, never `null`.
 
@@ -393,6 +496,16 @@ listed so nobody reaches for them by default:
   boundary.
 - **Exceptions for control flow.** Errors are values; `Try` is an
   interop shim, not an API.
+- **Running effects in the middle.** No `unsafeRun` outside app entry
+  points and specs.
+- **`Future`, `Await`, `ExecutionContext`.** Futures from libraries
+  are lifted with `ZIO.fromFuture` / `ZIO.fromCompletionStage` at the
+  boundary.
+- **ZIO 1.x idioms.** No `zio.console._`, `ZEnv`, `Has`, `ZManaged`,
+  zio-magic.
+- **A second effect system.** No cats-effect, Akka, or Pekko in the
+  core; `zio-interop-cats` is allowed at a boundary when a library
+  demands it and never leaks inward.
 - **Stringly-typed APIs.** Raw `String` ids, `Any`/`Map[String, Any]`
   payloads, JSON ASTs passed through core logic. Parse into types at
   the boundary.
@@ -430,6 +543,9 @@ listed so nobody reaches for them by default:
   `var` in non-local position, `asInstanceOf`, `isInstanceOf`,
   `return`, implicit conversions). A per-line suppression without a
   one-line reason is a review flag.
+- `Test / fork := true` for any module that starts external
+  resources (containers, servers); without it they outlive the test
+  JVM.
 - Public API surfaces of stable modules document their contract in
   Scaladoc; internal modules start with it off, API-surface modules
   start with it on.
