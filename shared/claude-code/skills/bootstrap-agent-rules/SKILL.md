@@ -1,6 +1,6 @@
 ---
 name: bootstrap-agent-rules
-description: Bootstraps a project's agent-rules layer — .claude/rules/ with idiomatic coding rules (Rust, TypeScript, and/or Scala, auto-detected), METHODOLOGIES.md workflow, a STATE.md session-memory file, a bespoke ARCHITECTURE.md, a CLAUDE.md authority map with AGENTS.md symlink, and (optionally, always ask first) Linear ticket integration. Invoke explicitly with /bootstrap-agent-rules or on phrases like "bootstrap the agent rules", "set up Claude rules for this project", "install the rules layer", "set up STATE.md and ARCHITECTURE.md", "give this project the standard rules".
+description: Bootstraps a project's agent-rules layer — .claude/rules/ with idiomatic coding rules (Rust, TypeScript, and/or Scala, auto-detected), METHODOLOGIES.md workflow, REPO_HARDENING.md (CI gates, scanning, supply chain, releases), a STATE.md session-memory file, a bespoke ARCHITECTURE.md, a CLAUDE.md authority map with AGENTS.md symlink, and (optionally, always ask first) Linear ticket integration. Invoke explicitly with /bootstrap-agent-rules or on phrases like "bootstrap the agent rules", "set up Claude rules for this project", "install the rules layer", "set up STATE.md and ARCHITECTURE.md", "give this project the standard rules".
 ---
 
 # bootstrap-agent-rules
@@ -20,6 +20,7 @@ AGENTS.md -> CLAUDE.md           symlink (read natively by Cursor & others)
   TS_BEST_PRACTICES.md           if TypeScript detected
   SCALA_BEST_PRACTICES.md        if Scala detected
   METHODOLOGIES.md               workflow: branching, PRs, refactors, post-merge
+  REPO_HARDENING.md              CI gates, scanning, supply chain, releases, Scorecard
   STATE.md                       session memory — filled from repo analysis
   ARCHITECTURE.md                bespoke — filled via design dialog
   LINEAR.md                      only if user opts in
@@ -60,7 +61,7 @@ Look at the repo root **and first-level workspace/package directories**
 ### 3. Install the fixed rule files
 
 Copy from `references/` into `.claude/rules/`: the detected
-best-practices file(s) and `METHODOLOGIES.md`.
+best-practices file(s), `METHODOLOGIES.md` and `REPO_HARDENING.md`.
 
 - **Dereference symlinks** (`cp -L`) — the references may be symlinks
   into the dotfiles repo; the installed files must be real files.
