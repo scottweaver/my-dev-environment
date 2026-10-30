@@ -175,6 +175,14 @@ issue (its body carries the exact commands), and closed by hand.
   its own PR first. For Rust, cargo-dist generates the workflow, builds
   per target, attaches archives and checksums, and publishes installers
   (a `curl | sh` script, a Homebrew formula to a tap).
+- **Release notes must contain nothing the CI runner masks.** cargo-dist
+  passes the CHANGELOG section for the release through a GitHub Actions
+  step output, and the runner drops any output in which it masked a
+  secret-shaped value; the literal `Authorization: Bearer <token>` was
+  enough to skip every build job and publish an empty release (sbt-server
+  v1.0.0, first attempt, 2026-10-30). Header examples go in the docs, and
+  a release that comes up empty is diagnosed from the plan job's
+  "Skip output" warning.
 - **The binaries are auditable**: built with `cargo-auditable`, so
   `cargo audit bin` can check an installed copy against the advisory
   database without the source tree.
