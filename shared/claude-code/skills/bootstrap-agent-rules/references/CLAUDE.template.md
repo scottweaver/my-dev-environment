@@ -22,6 +22,7 @@ decide which file is authoritative for a given decision.
 {{TS_ROW}}| TypeScript style, type discipline                       | `TS_BEST_PRACTICES.md`   |
 {{SCALA_ROW}}| Scala style, type discipline, FP conventions            | `SCALA_BEST_PRACTICES.md` |
 | Workflow: branching, PRs, refactors, post-merge cleanup | `METHODOLOGIES.md`       |
+| Repository hardening: CI gates, scanning, supply chain, releases | `REPO_HARDENING.md`      |
 | Binding architecture constraints                        | `ARCHITECTURE.md`        |
 {{LINEAR_ROW}}| Linear tickets (drafting, creating, transitions)        | `LINEAR.md`              |
 {{PROJECT_ROW}}| Bindings for portable skills (stand-up, wrap-up)        | `PROJECT.md`             |
